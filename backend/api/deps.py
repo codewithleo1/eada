@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.api.middleware.auth import verify_token
 from backend.api.middleware.rate_limit import check_rate_limit

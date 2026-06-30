@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from backend.llm.gateway import llm
 from backend.observability.logging import get_logger
 from backend.observability.tracing import tracer
@@ -63,6 +63,8 @@ async def websocket_chat(
                 metadata={"message_length": len(user_message)},
             )
 
+            full_response = ""
+
             messages = [
                 {
                     "role": "system",
@@ -79,7 +81,16 @@ async def websocket_chat(
             ]
 
             async for token_text in llm.stream(messages=messages):
+                full_response += token_text
                 await websocket.send_text(token_text)
+
+            tracer.log_generation(
+                trace=trace,
+                name="chat_response",
+                model=llm.primary_model,
+                prompt=user_message,
+                completion=full_response,
+            )
 
             await websocket.send_text("[DONE]")
             log.info("chat_response_complete", user_id=user_id)
