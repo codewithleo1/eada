@@ -15,7 +15,7 @@ __pycache__/
 .python-version
 
 # Test files
-test_*.py
+/test_*.py
 
 # Logs and outputs
 *.log
