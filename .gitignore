@@ -23,3 +23,13 @@ reports/
 
 # VS Code
 .vscode/
+
+# Uploaded data files
+uploads/*
+!uploads/.gitkeep
+
+# Office temp files
+*.docx
+*.docx
+~$*.docx
+~$*.xlsx

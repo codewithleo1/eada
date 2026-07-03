@@ -1,0 +1,3 @@
+# Uploaded files (temp storage)
+uploads/*
+!uploads/.gitkeep

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
 from backend.observability.logging import setup_logging, get_logger
 from backend.observability.tracing import tracer
-from backend.api.routes import chat, health, auth, conversations
+from backend.api.routes import chat, health, auth, conversations, upload
 
 # Setup logging immediately — before anything else
 setup_logging(debug=settings.app_debug)
@@ -45,11 +45,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Register routers
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
+app.include_router(upload.router)
 
 
 @app.get("/")
