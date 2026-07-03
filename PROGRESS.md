@@ -15,47 +15,30 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 complete, Phase 1 in progress (frontend underway)
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 backend ✅ — Frontend wiring NEXT
 
-### Phase 0 — Foundation (Days 1–5) ✅ COMPLETE
-- Day 1: uv scaffold, folder structure, dependencies
-- Day 2: LiteLLM gateway, streaming WebSocket chat endpoint
-- Day 3: Docker stack (Postgres, Redis, Qdrant, Langfuse) + tracing wired in
-- Day 4: JWT auth + Redis rate limiting
-- Day 5: GitHub repo live, CI/CD via GitHub Actions (ruff + pytest), all green
+### Phase 0 — Foundation ✅ COMPLETE
+### Phase 1 — Simple Chat Interface ✅ COMPLETE
+### Phase 2 — Data File Analysis ✅ BACKEND COMPLETE, frontend pending
 
-### Phase 1 — Simple Chat Interface (Weeks 3–4)
-**Backend: COMPLETE**
-- PostgreSQL schema: `users`, `conversations`, `messages` (isolated in `eada_app` DB — NOT the same DB as Langfuse, which uses `eada`)
-- SQLAlchemy async models (`backend/db/models.py`)
-- Alembic migrations configured for async (`backend/db/migrations/env.py` rewritten for async engine)
-- Repository layer (`backend/db/repositories.py`) — `UserRepository`, `ConversationRepository`, `MessageRepository`
-- Real user registration (`POST /auth/register`) and login (`POST /auth/token`) — replaced old fake in-memory user dict
-- `/chat/ws` now persists every message, supports resuming via `?conversation_id=`, sends full history to Gemini every turn (true multi-turn memory) — verified working via direct DB query
-- `GET /conversations` and `GET /conversations/{id}` — tested live via Swagger UI, working
+**Backend complete:**
+- `backend/tools/file_tool.py` — reads CSV, Excel, JSON, Parquet; extracts schema + sample rows
+- `backend/tools/sql_tool.py` — executes DuckDB SQL in-process against uploaded files
+- `backend/api/routes/upload.py` — `POST /upload` endpoint; saves with UUID filename, returns file_id + schema
+- `backend/api/routes/chat.py` — updated WebSocket; detects file_id, injects schema into system prompt, extracts SQL from LLM response, executes via DuckDB, streams results + plain-English summary
+- Dependencies added: `duckdb==1.5.4`, `pandas==3.0.3`, `openpyxl`, `python-multipart`
+- `uploads/` directory created and gitignored
 
-**Frontend: IN PROGRESS — left off here**
-- Just ran `npm create vite@latest frontend -- --template react-ts` inside project root
-- Chose: ESLint (not oxlint), said yes to install + start immediately
-- **Next step when resuming:** confirm the Vite dev server started correctly (should show a localhost URL, typically `http://localhost:5173`), then continue with:
-  1. Install Tailwind CSS in `frontend/`
-  2. Build login/register screen
-  3. Build chat interface (message list + input box)
-  4. Wire up WebSocket client to `ws://localhost:8000/chat/ws`
-  5. End-to-end test: register → login → send message → see streaming response → refresh and confirm history persists
+**Verified end-to-end:**
+- Upload CSV → get file_id + schema ✅
+- WebSocket chat with file_id → LLM writes SQL → DuckDB executes → results streamed → summary generated ✅
 
----
-
-## Key gotchas hit and fixed (don't repeat these)
-
-1. **Langfuse SDK version**: must be `langfuse==2.60.0` exactly. v3/v4 break self-hosted (different API, OTLP endpoints that don't exist on self-hosted v2 server).
-2. **bcrypt + passlib broken on Python 3.14** → switched to `argon2` (`pwd_context = CryptContext(schemes=["argon2"])`).
-3. **Pydantic Settings**: must use a single flat `Settings` class in `config.py` — nested settings classes (e.g. `LLMSettings`, `LangfuseSettings` as sub-objects) don't inherit `env_file` config properly.
-4. **`.gitignore` pattern `test_*.py`** was too broad and silently excluded real tests in `backend/tests/`. Fixed by anchoring to root: `/test_*.py`.
-5. **Shared Postgres DB with Langfuse**: original docker-compose had both the app and Langfuse pointed at the same `eada` database — caused Alembic to try to delete Langfuse's tables. Fixed via `infra/postgres/init-multi-db.sh` which creates a second `eada_app` database on container init. App's `.env` `DATABASE_URL` now points to `eada_app`, Langfuse keeps `eada`.
-6. **Docker init script accidentally created as a directory** (`New-Item -ItemType File` silently failed) — always verify with `Get-Item <path>` after creating shell scripts on Windows; also must save with LF line endings, not CRLF, or Linux containers can't execute them.
-7. **uv PATH**: after every fresh terminal/VS Code restart, must run `$env:Path = "C:\Users\suraj\.local\bin;$env:Path"` before `uv` commands work.
-8. **Docker Desktop must be manually started** after a system restart before `docker compose up` will work.
+**Frontend: NEXT — wire file upload button into React chat UI**
+- Add file upload button to `Chat.tsx`
+- Call `POST /upload` when user selects a file
+- Store `file_id` in component state
+- Pass `file_id` as WebSocket query param when connecting
+- Show file name + column count as a badge in the chat header
 
 ---
 
@@ -74,7 +57,7 @@ docker compose ps   # confirm all 4 services healthy/running
 # 4. Start backend
 uv run uvicorn backend.main:app --reload
 
-# 5. (once frontend exists) in a separate terminal:
+# 5. Start frontend (separate terminal)
 cd frontend
 npm run dev
 ```
@@ -92,21 +75,20 @@ npm run dev
 
 ---
 
-## Roadmap reminder (9 phases, 26 weeks total)
+## Key gotchas (never repeat these)
 
-```
-Phase 0 — Foundation                    ✅ DONE
-Phase 1 — Simple Chat Interface          🔶 IN PROGRESS (backend done, frontend started)
-Phase 2 — Data File Analysis (CSV, Excel, PDF, SQL via DuckDB)
-Phase 3 — RAG Pipeline (Qdrant, embeddings, hybrid search)
-Phase 4 — Tool Calling & MCP
-Phase 5 — Full Agent Architecture (LangGraph, 8 specialized agents)
-Phase 6 — Multi-Agent Collaboration & Self-Correction
-Phase 7 — Interactive Dashboard (proper React frontend, auth, projects)
-Phase 8 — Production Deployment
-Phase 9 — Capstone Polish
-```
+1. **Langfuse SDK version**: pin to `langfuse==2.60.0` exactly
+2. **bcrypt broken on Python 3.14** → use argon2
+3. **Pydantic Settings**: single flat `Settings` class only — no nested sub-settings
+4. **`.gitignore` pattern**: use `/test_*.py` not `test_*.py`
+5. **Shared Postgres DB**: Langfuse uses `eada`, app uses `eada_app` — never share them
+6. **Docker init script**: must have LF line endings, not CRLF
+7. **uv PATH**: run `$env:Path = "C:\Users\suraj\.local\bin;$env:Path"` every new terminal
+8. **Docker Desktop**: must be started manually after system restart
+9. **frontend npm commands**: must be run from inside `frontend/` folder
+10. **DuckDB + CSV encoding**: PowerShell `Set-Content` writes UTF-8 BOM which breaks DuckDB sniffer — use pandas bridge via `_execute_on_file` (loads via pandas, registers as DuckDB view called `data`)
+11. **Excel files**: DuckDB can't read `.xlsx` natively — always go through pandas → DuckDB view
 
 ---
 
-*Last updated: mid-Phase-1, frontend scaffold just initiated, awaiting Vite dev server confirmation.*
+## Roadmap reminder (9 phases, 26 weeks total)
