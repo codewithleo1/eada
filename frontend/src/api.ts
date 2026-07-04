@@ -28,6 +28,16 @@ export interface ConversationDetail extends ConversationSummary {
   messages: Message[];
 }
 
+export interface UploadResponse {
+  file_id: string;
+  original_filename: string;
+  extension: string;
+  row_count: number;
+  columns: { name: string; dtype: string }[];
+  sample: Record<string, unknown>[];
+  message: string;
+}
+
 export async function register(
   username: string,
   password: string
@@ -70,10 +80,28 @@ export async function getConversation(
   return res.data;
 }
 
+export async function uploadFile(
+  token: string,
+  file: File
+): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post<UploadResponse>("/upload", formData, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "multipart/form-data",
+    },
+  });
+  return res.data;
+}
+
 export function buildWebSocketUrl(
   token: string,
-  conversationId?: string
+  conversationId?: string,
+  fileId?: string
 ): string {
-  const base = `ws://localhost:8000/chat/ws?token=${token}`;
-  return conversationId ? `${base}&conversation_id=${conversationId}` : base;
+  let url = `ws://localhost:8000/chat/ws?token=${token}`;
+  if (conversationId) url += `&conversation_id=${conversationId}`;
+  if (fileId) url += `&file_id=${fileId}`;
+  return url;
 }
