@@ -15,11 +15,11 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 backend ✅ — Frontend wiring NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2  ✅ — Phase 3 RAG Pipeline NEXT
 
 ### Phase 0 — Foundation ✅ COMPLETE
 ### Phase 1 — Simple Chat Interface ✅ COMPLETE
-### Phase 2 — Data File Analysis ✅ BACKEND COMPLETE, frontend pending
+### Phase 2 — Data File Analysis ✅ Done
 
 **Backend complete:**
 - `backend/tools/file_tool.py` — reads CSV, Excel, JSON, Parquet; extracts schema + sample rows
@@ -92,3 +92,5 @@ npm run dev
 ---
 
 ## Roadmap reminder (9 phases, 26 weeks total)
+
+*Last updated: Phase 2 fully complete — file upload UI + DuckDB analysis working end-to-end. Next: Phase 3 RAG Pipeline (Qdrant, embeddings, hybrid search).*
