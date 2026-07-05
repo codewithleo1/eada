@@ -9,36 +9,34 @@
 Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on a CPU-only laptop (i5-1334U, 8GB RAM) using only free tools.
 
 - Repo: https://github.com/codewithleo1/eada
-- Stack: FastAPI + LangGraph + LiteLLM (Gemini 2.5 Flash) + PostgreSQL + Redis + Qdrant + Langfuse, all via Docker Compose
+- Stack: FastAPI + LiteLLM (Gemini 2.5 Flash) + PostgreSQL + Redis + Qdrant + Langfuse, all via Docker Compose
 - Environment: Windows + VS Code + PowerShell, package manager `uv`
 - Learning style: step-by-step, one file at a time, explanation before code, verify before moving on
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2  ✅ — Phase 3 RAG Pipeline NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ — Phase 4 Tool Calling NEXT
 
 ### Phase 0 — Foundation ✅ COMPLETE
 ### Phase 1 — Simple Chat Interface ✅ COMPLETE
-### Phase 2 — Data File Analysis ✅ Done
 
-**Backend complete:**
+### Phase 2 — Data File Analysis ✅ COMPLETE
 - `backend/tools/file_tool.py` — reads CSV, Excel, JSON, Parquet; extracts schema + sample rows
 - `backend/tools/sql_tool.py` — executes DuckDB SQL in-process against uploaded files
 - `backend/api/routes/upload.py` — `POST /upload` endpoint; saves with UUID filename, returns file_id + schema
-- `backend/api/routes/chat.py` — updated WebSocket; detects file_id, injects schema into system prompt, extracts SQL from LLM response, executes via DuckDB, streams results + plain-English summary
-- Dependencies added: `duckdb==1.5.4`, `pandas==3.0.3`, `openpyxl`, `python-multipart`
-- `uploads/` directory created and gitignored
+- `backend/api/routes/chat.py` — updated WebSocket; detects file_id, injects schema, executes SQL, streams results + summary
+- `frontend/src/Chat.tsx` — file upload button (📎), file badge, file_id passed as WebSocket param
+- `frontend/src/api.ts` — `uploadFile()` function, `UploadResponse` interface, updated `buildWebSocketUrl()`
+- Dependencies: `duckdb==1.5.4`, `pandas==3.0.3`, `openpyxl`, `python-multipart`
 
-**Verified end-to-end:**
-- Upload CSV → get file_id + schema ✅
-- WebSocket chat with file_id → LLM writes SQL → DuckDB executes → results streamed → summary generated ✅
-
-**Frontend: NEXT — wire file upload button into React chat UI**
-- Add file upload button to `Chat.tsx`
-- Call `POST /upload` when user selects a file
-- Store `file_id` in component state
-- Pass `file_id` as WebSocket query param when connecting
-- Show file name + column count as a badge in the chat header
+### Phase 3 — RAG Pipeline ✅ COMPLETE
+- `backend/rag/chunker.py` — splits PDF/DOCX/TXT/MD into overlapping chunks (1500 chars, 200 overlap)
+- `backend/rag/embedder.py` — embeds text via Google `gemini-embedding-001` (3072 dim, direct REST API)
+- `backend/rag/vector_store.py` — stores and searches chunks in Qdrant using `query_points()` (v1.18.0+)
+- `backend/rag/rag_pipeline.py` — orchestrates ingest and retrieve flows
+- `backend/api/routes/ingest.py` — `POST /ingest` endpoint; chunks, embeds, stores in Qdrant; returns `doc_id`
+- `backend/api/routes/chat.py` — updated WebSocket; accepts `doc_id` param, retrieves relevant chunks, injects as LLM context
+- Dependencies: `qdrant-client==1.18.0`, `pymupdf==1.28.0`, `python-docx==1.2.0`
 
 ---
 
@@ -86,11 +84,12 @@ npm run dev
 7. **uv PATH**: run `$env:Path = "C:\Users\suraj\.local\bin;$env:Path"` every new terminal
 8. **Docker Desktop**: must be started manually after system restart
 9. **frontend npm commands**: must be run from inside `frontend/` folder
-10. **DuckDB + CSV encoding**: PowerShell `Set-Content` writes UTF-8 BOM which breaks DuckDB sniffer — use pandas bridge via `_execute_on_file` (loads via pandas, registers as DuckDB view called `data`)
+10. **DuckDB + CSV encoding**: PowerShell `Set-Content` writes UTF-8 BOM — use pandas bridge via `_execute_on_file`
 11. **Excel files**: DuckDB can't read `.xlsx` natively — always go through pandas → DuckDB view
+12. **Google embeddings via LiteLLM**: LiteLLM does NOT support `gemini/text-embedding-*` — call Google REST API directly
+13. **Gemini embedding model**: `text-embedding-004` not available on free API keys — use `gemini-embedding-001` (3072 dim)
+14. **Qdrant client 1.18.0**: `.search()` removed — use `.query_points()` instead
 
 ---
 
 ## Roadmap reminder (9 phases, 26 weeks total)
-
-*Last updated: Phase 2 fully complete — file upload UI + DuckDB analysis working end-to-end. Next: Phase 3 RAG Pipeline (Qdrant, embeddings, hybrid search).*
