@@ -36,3 +36,8 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.20",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+

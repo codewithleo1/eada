@@ -1,113 +1,161 @@
+"""
+chat.py — WebSocket chat endpoint with agentic tool-calling loop.
+
+Flow per user message:
+  1. Build messages list (system prompt + conversation history)
+  2. Get tools relevant to this session (file? doc?)
+  3. Call LLM with tools → get ToolCallResponse
+  4. If LLM wants a tool → execute it, append result, go to 3
+  5. Repeat until LLM gives final text answer (max 5 iterations)
+  6. Stream final answer to frontend token by token
+  7. Persist full exchange to DB
+"""
+
+from __future__ import annotations
+
 import json
-import re
 import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from backend.llm.gateway import llm
+from backend.llm.gateway import llm, ToolCallResponse
+from backend.tools.registry import get_tools_for_context
+from backend.tools.executor import execute_tool_call
 from backend.observability.logging import get_logger
 from backend.observability.tracing import tracer
 from backend.api.middleware.auth import verify_token
 from backend.api.middleware.rate_limit import check_rate_limit
 from backend.db.session import async_session_factory
 from backend.db.repositories import ConversationRepository, MessageRepository
-from backend.tools.file_tool import get_file_info, FileToolError
-from backend.tools.sql_tool import execute_query, SqlToolError
-from backend.rag.rag_pipeline import retrieve_context, build_rag_context, RAGPipelineError
 
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# Safety ceiling for the agentic tool-calling loop
+MAX_TOOL_ITERATIONS = 5
 
-def _build_system_prompt(file_info: dict | None, rag_context: str | None = None) -> str:
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+
+def _build_system_prompt(
+    has_file: bool = False,
+    has_doc: bool = False,
+) -> str:
     """
-    Build the system prompt.
-    If a file is attached, include schema + sample so the LLM can write SQL.
-    If RAG context is provided, include retrieved document chunks.
+    Build the system prompt for the current session.
+
+    No file schema or RAG context is injected here — the LLM pulls
+    that information itself by calling get_file_schema or retrieve_context.
     """
-    if rag_context is not None:
-        return f"""You are an expert analyst with access to relevant document sections.
+    base = (
+        "You are EADA, an expert autonomous data analyst. "
+        "Answer questions clearly and concisely. "
+        "Think step by step before acting. "
+    )
 
-Use ONLY the following document context to answer the user's question.
-If the answer is not in the context, say "I don't have enough information in the document to answer that."
-
-DOCUMENT CONTEXT:
-{rag_context}
-
-Answer based on the context above. Be precise and cite specific figures when available."""
-
-    if file_info is None:
-        return (
-            "You are an expert data analyst. "
-            "Answer questions clearly and concisely. "
-            "When writing code, use Python."
+    if has_file and has_doc:
+        return base + (
+            "You have access to an uploaded data file and an ingested document. "
+            "Use get_file_schema to inspect the file before querying it. "
+            "Use query_data to run SQL against the file. "
+            "Use retrieve_context to search the document for relevant information."
         )
 
-    columns_desc = ", ".join(
-        f"{c['name']} ({c['dtype']})" for c in file_info["columns"]
-    )
-    sample_json = json.dumps(file_info["sample"][:3], indent=2)
+    if has_file:
+        return base + (
+            "You have access to an uploaded data file. "
+            "Always call get_file_schema first to understand the columns, "
+            "then call query_data to answer questions about the data. "
+            "Use DuckDB SQL syntax. The table name is always 'data'."
+        )
 
-    return f"""You are an expert data analyst with access to a data file.
+    if has_doc:
+        return base + (
+            "You have access to an ingested document. "
+            "Use retrieve_context to find relevant sections before answering."
+        )
 
-File: {file_info['file_path']}
-Rows: {file_info['row_count']}
-Columns: {columns_desc}
-
-Sample data (first 3 rows):
-{sample_json}
-
-When the user asks a question about the data:
-1. Write a DuckDB SQL query to answer it.
-2. Wrap the SQL in a ```sql ... ``` code block.
-3. Use 'data' as the table name in your SQL (e.g. SELECT * FROM data LIMIT 5).
-4. After the SQL block, write a brief explanation of what the query does.
-5. The system will execute your SQL and show the results to the user automatically.
-
-If the question is not about the data, answer normally without SQL."""
+    return base + "Answer questions using your knowledge."
 
 
-def _extract_sql(text: str) -> str | None:
+# ---------------------------------------------------------------------------
+# Tool-calling agentic loop
+# ---------------------------------------------------------------------------
+
+async def _run_tool_loop(
+    messages: list[dict],
+    tools: list[dict],
+) -> tuple[str, list[dict]]:
     """
-    Extract the first SQL query from a ```sql ... ``` code block.
-    Returns None if no SQL block found.
+    Run the agentic tool-calling loop until the LLM gives a final answer.
+
+    Args:
+        messages: Full conversation history in OpenAI format.
+        tools:    Tool definitions from registry.
+
+    Returns:
+        Tuple of:
+          - final_text: the LLM's final answer as a plain string
+          - messages:   updated messages list including all tool exchanges
+                        (caller should persist the assistant's final message)
     """
-    pattern = r"```sql\s*(.*?)\s*```"
-    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    return None
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        log.info("tool_loop_iteration", iteration=iteration)
+
+        # Ask the LLM — it returns text OR tool call requests
+        response: ToolCallResponse = await llm.complete_with_tools(
+            messages=messages,
+            tools=tools,
+        )
+
+        # LLM gave a final text answer — we are done
+        if not response.wants_tool:
+            final_text = response.text or ""
+            log.info("tool_loop_complete", iterations=iteration + 1)
+            return final_text, messages
+
+        # LLM wants to call tools — execute each one and collect results
+        # First append the assistant's tool-call message to history
+        # so the LLM sees its own request in the next turn
+        tool_call_dicts = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments),
+                },
+            }
+            for tc in response.tool_calls
+        ]
+        messages.append({
+            "role": "assistant",
+            "tool_calls": tool_call_dicts,
+            "content": None,
+        })
+
+        # Execute each tool call and append results as tool messages
+        for tc in response.tool_calls:
+            log.info("executing_tool", name=tc.name, args=tc.arguments)
+            result_str = await execute_tool_call(tc.name, tc.arguments)
+            log.info("tool_result", name=tc.name, result_length=len(result_str))
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result_str,
+            })
+
+    # Iteration ceiling hit — ask LLM for best-effort answer with what it has
+    log.warning("tool_loop_ceiling_hit", max_iterations=MAX_TOOL_ITERATIONS)
+    fallback = await llm.complete(messages=messages)
+    return fallback, messages
 
 
-def _format_results(sql_result: dict) -> str:
-    """
-    Format DuckDB query results as a readable markdown table string
-    to send back to the LLM for final formatting.
-    """
-    if not sql_result["rows"]:
-        return "The query returned no results."
-
-    cols = sql_result["columns"]
-    rows = sql_result["rows"]
-
-    # Build markdown table
-    header = " | ".join(cols)
-    separator = " | ".join(["---"] * len(cols))
-    lines = [header, separator]
-
-    for row in rows[:20]:  # show max 20 rows in LLM context
-        line = " | ".join(str(row.get(c, "")) for c in cols)
-        lines.append(line)
-
-    table = "\n".join(lines)
-
-    note = ""
-    if sql_result["truncated"]:
-        note = f"\n\n_(Results truncated to {sql_result['row_count']} rows)_"
-    elif len(rows) > 20:
-        note = f"\n\n_(Showing 20 of {sql_result['row_count']} rows)_"
-
-    return f"Query results:\n\n{table}{note}"
-
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
 
 @router.websocket("/ws")
 async def websocket_chat(
@@ -117,13 +165,17 @@ async def websocket_chat(
     file_id: str | None = Query(None, description="UUID of an uploaded file to analyse"),
     doc_id: str | None = Query(None, description="UUID of an ingested document for RAG Q&A"),
 ) -> None:
-    """Protected, persistent WebSocket streaming chat endpoint.
+    """
+    Protected, persistent WebSocket streaming chat endpoint.
 
     Connect with:
         ws://localhost:8000/chat/ws?token=<jwt>
         ws://localhost:8000/chat/ws?token=<jwt>&conversation_id=<uuid>
         ws://localhost:8000/chat/ws?token=<jwt>&file_id=<uuid>
+        ws://localhost:8000/chat/ws?token=<jwt>&doc_id=<uuid>
+        ws://localhost:8000/chat/ws?token=<jwt>&file_id=<uuid>&doc_id=<uuid>
     """
+    # --- Auth ---
     try:
         payload = verify_token(token)
         user_id_str = payload.get("sub", "anonymous")
@@ -132,6 +184,7 @@ async def websocket_chat(
         await websocket.close(code=4001)
         return
 
+    # --- Rate limit ---
     try:
         check_rate_limit(user_id_str)
     except Exception:
@@ -139,44 +192,26 @@ async def websocket_chat(
         return
 
     await websocket.accept()
-    log.info("websocket_connected", user_id=user_id_str, file_id=file_id)
 
-    # Load file info once at connection time if file_id provided
-    file_info = None
-    if file_id:
-        try:
-            from pathlib import Path
-            # Find the file — it could be any supported extension
-            from backend.tools.file_tool import SUPPORTED_EXTENSIONS
-            uploads_dir = Path("uploads")
-            matched = None
-            for ext in SUPPORTED_EXTENSIONS:
-                candidate = uploads_dir / f"{file_id}{ext}"
-                if candidate.exists():
-                    matched = candidate
-                    break
+    has_file = file_id is not None
+    has_doc = doc_id is not None
 
-            if matched is None:
-                await websocket.send_text(f"[ERROR] File not found for file_id: {file_id}")
-                await websocket.close()
-                return
+    log.info(
+        "websocket_connected",
+        user_id=user_id_str,
+        file_id=file_id,
+        doc_id=doc_id,
+    )
 
-            file_info = get_file_info(str(matched))
-            log.info("file_loaded_for_chat", file_id=file_id, rows=file_info["row_count"])
+    # Pre-build tools and system prompt once per connection
+    tools = get_tools_for_context(has_file=has_file, has_doc=has_doc)
+    system_prompt = _build_system_prompt(has_file=has_file, has_doc=has_doc)
 
-        except FileToolError as e:
-            await websocket.send_text(f"[ERROR] Could not load file: {e}")
-            await websocket.close()
-            return
-
-    # Log connection params
-    log.info("websocket_connected", user_id=user_id_str, file_id=file_id, doc_id=doc_id)
-    
     async with async_session_factory() as db:
         conv_repo = ConversationRepository(db)
         msg_repo = MessageRepository(db)
 
-        # Resume existing conversation or start a new one
+        # Resume or create conversation
         conversation = None
         if conversation_id:
             try:
@@ -188,12 +223,20 @@ async def websocket_chat(
 
         if conversation is None:
             conversation = await conv_repo.create(user_id=user_id)
-            log.info("new_conversation_started", conversation_id=str(conversation.id))
+            log.info("new_conversation", id=str(conversation.id))
 
         await websocket.send_json({
             "type": "conversation_id",
             "value": str(conversation.id),
         })
+
+        # Inject file_id and doc_id into system prompt so LLM knows the IDs
+        # to pass when calling tools — it cannot guess them
+        enriched_system = system_prompt
+        if file_id:
+            enriched_system += f"\n\nThe uploaded file ID is: {file_id}"
+        if doc_id:
+            enriched_system += f"\n\nThe ingested document ID is: {doc_id}"
 
         try:
             while True:
@@ -204,10 +247,18 @@ async def websocket_chat(
                     await websocket.send_text("[ERROR] Empty message")
                     continue
 
-                log.info("chat_message_received", user_id=user_id_str, length=len(user_message))
+                log.info(
+                    "message_received",
+                    user_id=user_id_str,
+                    length=len(user_message),
+                )
 
-                await msg_repo.add(conversation.id, role="user", content=user_message)
+                # Persist user message
+                await msg_repo.add(
+                    conversation.id, role="user", content=user_message
+                )
 
+                # Auto-title conversation from first message
                 history = await msg_repo.list_for_conversation(conversation.id)
                 if len(history) == 1:
                     title = user_message[:50] + ("..." if len(user_message) > 50 else "")
@@ -219,80 +270,33 @@ async def websocket_chat(
                     metadata={"conversation_id": str(conversation.id)},
                 )
 
-                # Build RAG context if doc_id provided
-                rag_context = None
-                if doc_id:
-                    try:
-                        chunks = retrieve_context(user_message, top_k=5, doc_id=doc_id)
-                        rag_context = build_rag_context(chunks)
-                    except RAGPipelineError as e:
-                        log.error("rag_retrieval_failed", error=str(e))
-
-                messages = [
-                    {
-                        "role": "system",
-                        "content": _build_system_prompt(file_info, rag_context),
-                    }
+                # Build full messages list for this turn
+                messages: list[dict] = [
+                    {"role": "system", "content": enriched_system}
                 ]
                 for m in history:
                     messages.append({"role": m.role, "content": m.content})
 
-                # --- First LLM call: get SQL + explanation ---
-                full_response = ""
-                async for token_text in llm.stream(messages=messages):
-                    full_response += token_text
-                    await websocket.send_text(token_text)
+                # --- Agentic tool loop ---
+                if tools:
+                    final_answer, _ = await _run_tool_loop(
+                        messages=messages,
+                        tools=tools,
+                    )
+                else:
+                    # No tools available — plain completion
+                    final_answer = await llm.complete(messages=messages)
 
-                # --- If file attached, try to extract and run SQL ---
-                if file_info is not None:
-                    sql = _extract_sql(full_response)
+                # Stream final answer to frontend token by token
+                # We simulate streaming by chunking the completed text
+                # (tool loop uses non-streaming complete_with_tools internally)
+                chunk_size = 20
+                for i in range(0, len(final_answer), chunk_size):
+                    await websocket.send_text(final_answer[i:i + chunk_size])
 
-                    if sql is not None:
-                        log.info("sql_extracted", sql=sql[:120])
-
-                        try:
-                            # Replace 'data' table name with actual file reference
-                            # sql_tool._execute_on_file handles 'data' view internally
-                            sql_result = execute_query(sql, file_info["file_path"])
-                            results_text = _format_results(sql_result)
-
-                            log.info(
-                                "sql_executed",
-                                row_count=sql_result["row_count"],
-                            )
-
-                            # Stream a separator then the results
-                            await websocket.send_text(f"\n\n---\n\n{results_text}")
-
-                            # --- Second LLM call: summarise results in plain English ---
-                            summary_messages = messages + [
-                                {"role": "assistant", "content": full_response},
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        f"The query returned these results:\n\n{results_text}\n\n"
-                                        "Please summarise the key insights in 2-3 plain English sentences."
-                                    ),
-                                },
-                            ]
-
-                            await websocket.send_text("\n\n**Summary:** ")
-                            summary = ""
-                            async for token_text in llm.stream(messages=summary_messages):
-                                summary += token_text
-                                await websocket.send_text(token_text)
-
-                            full_response += f"\n\n{results_text}\n\n**Summary:** {summary}"
-
-                        except SqlToolError as e:
-                            error_msg = f"\n\n⚠️ SQL execution failed: {e}"
-                            await websocket.send_text(error_msg)
-                            full_response += error_msg
-                            log.error("sql_execution_failed", error=str(e))
-
-                # Save full response including results
+                # Persist assistant response
                 await msg_repo.add(
-                    conversation.id, role="assistant", content=full_response
+                    conversation.id, role="assistant", content=final_answer
                 )
 
                 tracer.log_generation(
@@ -300,11 +304,11 @@ async def websocket_chat(
                     name="chat_response",
                     model=llm.primary_model,
                     prompt=user_message,
-                    completion=full_response,
+                    completion=final_answer,
                 )
 
                 await websocket.send_text("[DONE]")
-                log.info("chat_response_complete", user_id=user_id_str)
+                log.info("response_complete", user_id=user_id_str)
 
         except WebSocketDisconnect:
             log.info("websocket_disconnected", user_id=user_id_str)
