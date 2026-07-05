@@ -8,7 +8,6 @@ Returns structured metadata the LLM uses to write accurate SQL queries.
 import json
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 
 from backend.observability.logging import get_logger

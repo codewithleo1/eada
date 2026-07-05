@@ -61,7 +61,7 @@ async def upload_file(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Maximum size is 50MB.",
+            detail="File too large. Maximum size is 50MB.",
         )
 
     # 3. Save with UUID filename to avoid collisions
