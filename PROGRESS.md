@@ -1,4 +1,4 @@
-# EADA — Progress Log
+﻿# EADA — Progress Log
 
 > Update this file at the end of each session. If a conversation with Claude ends unexpectedly, paste this entire file as the first message in a new chat to resume exactly where you left off.
 
@@ -16,7 +16,7 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ — Phase 4 Tool Calling NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ — Phase 5 Agent Architecture NEXT
 
 ---
 
@@ -68,6 +68,20 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 - `backend/api/routes/chat.py` — updated WebSocket; accepts `doc_id` param, retrieves relevant chunks, injects as LLM context
 - Dependencies: `qdrant-client==1.18.0`, `pymupdf==1.28.0`, `python-docx==1.2.0`
 
+### Phase 4 — Tool Calling & MCP ✅ COMPLETE
+- `backend/tools/registry.py` — tool catalogue; `get_tools_for_context(has_file, has_doc)` returns relevant tool schemas
+- `backend/tools/executor.py` — tool router; maps LLM tool calls to real Python functions; resolves file_id → path
+- `backend/llm/gateway.py` — updated; added `ToolCallRequest`, `ToolCallResponse` dataclasses + `complete_with_tools()` method
+- `backend/api/routes/chat.py` — rewritten; agentic tool loop replaces fragile regex SQL extraction; MAX_TOOL_ITERATIONS=5
+- `backend/mcp/server.py` — MCP-compliant HTTP server; `GET /mcp/tools`, `POST /mcp/tools/call`, `GET /mcp/health`
+- `backend/tests/unit/test_registry.py` — 8 unit tests, all passing
+- `backend/tests/unit/test_executor.py` — 13 unit tests, all passing
+- `backend/tests/unit/test_gateway.py` — 10 unit tests, all passing
+- `test_e2e_phase4.py` — end-to-end test script; verified tool loop live in browser
+- Total unit tests: 33 passing
+- pyproject.toml — added `[tool.pytest.ini_options]` with `testpaths` and `asyncio_mode=auto`
+- Verified live in browser: multi-turn data questions answered correctly via tool loop
+
 ---
 
 ## Current Folder Structure
@@ -75,72 +89,82 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 EADA/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                  ← ruff + pytest, Python 3.14
+│       └── ci.yml
 ├── backend/
-│   ├── init.py
-│   ├── main.py                     ← FastAPI app, 6 routers registered
-│   ├── config.py                   ← flat Settings class, reads .env
+│   ├── __init__.py
+│   ├── main.py                     ← FastAPI app, 7 routers registered (incl. MCP)
+│   ├── config.py
 │   ├── api/
-│   │   ├── deps.py                 ← get_current_user, repo dependencies
+│   │   ├── deps.py
 │   │   ├── middleware/
-│   │   │   ├── auth.py             ← JWT verify
-│   │   │   └── rate_limit.py       ← Redis rate limiting
+│   │   │   ├── auth.py
+│   │   │   └── rate_limit.py
 │   │   └── routes/
-│   │       ├── auth.py             ← POST /auth/register, /auth/token
-│   │       ├── chat.py             ← WebSocket /chat/ws (file_id + doc_id support)
-│   │       ├── conversations.py    ← GET /conversations, /conversations/{id}
-│   │       ├── health.py           ← GET /health
-│   │       ├── ingest.py           ← POST /ingest (RAG document ingestion)
-│   │       └── upload.py           ← POST /upload (CSV/Excel/JSON/Parquet)
+│   │       ├── auth.py
+│   │       ├── chat.py             ← agentic tool loop, MAX_TOOL_ITERATIONS=5
+│   │       ├── conversations.py
+│   │       ├── health.py
+│   │       ├── ingest.py
+│   │       └── upload.py
 │   ├── agents/
-│   │   └── init.py             ← empty, Phase 5
+│   │   └── __init__.py             ← empty, Phase 5
 │   ├── db/
-│   │   ├── models.py               ← users, conversations, messages
-│   │   ├── repositories.py         ← UserRepo, ConversationRepo, MessageRepo
-│   │   ├── session.py              ← async SQLAlchemy session
-│   │   └── migrations/             ← Alembic async migrations
+│   │   ├── models.py
+│   │   ├── repositories.py
+│   │   ├── session.py
+│   │   └── migrations/
 │   ├── llm/
-│   │   ├── gateway.py              ← LiteLLM wrapper, Gemini + Groq fallback
+│   │   ├── gateway.py              ← complete_with_tools(), ToolCallRequest, ToolCallResponse
 │   │   └── prompts/
-│   │       └── init.py
+│   │       └── __init__.py
+│   ├── mcp/
+│   │   ├── __init__.py
+│   │   └── server.py               ← MCP HTTP server
 │   ├── observability/
-│   │   ├── logging.py              ← structlog setup
-│   │   └── tracing.py              ← Langfuse tracing
+│   │   ├── logging.py
+│   │   └── tracing.py
 │   ├── rag/
-│   │   ├── chunker.py              ← PDF/DOCX/TXT/MD → overlapping chunks
-│   │   ├── embedder.py             ← Google gemini-embedding-001 (3072 dim)
-│   │   ├── rag_pipeline.py         ← ingest + retrieve orchestration
-│   │   └── vector_store.py         ← Qdrant upsert + query_points search
+│   │   ├── chunker.py
+│   │   ├── embedder.py
+│   │   ├── rag_pipeline.py
+│   │   └── vector_store.py
 │   ├── tools/
-│   │   ├── file_tool.py            ← parse CSV/Excel/JSON/Parquet, extract schema
-│   │   └── sql_tool.py             ← DuckDB query execution
+│   │   ├── executor.py             ← tool router
+│   │   ├── file_tool.py
+│   │   ├── registry.py             ← tool catalogue
+│   │   └── sql_tool.py
 │   ├── memory/
-│   │   └── init.py             ← empty, Phase 5
+│   │   └── __init__.py             ← empty, Phase 5
 │   ├── evaluation/
-│   │   └── init.py             ← empty, Phase 5
+│   │   └── __init__.py             ← empty, Phase 5
 │   └── tests/
 │       ├── unit/
-│       │   └── test_health.py
+│       │   ├── test_health.py
+│       │   ├── test_registry.py
+│       │   ├── test_executor.py
+│       │   └── test_gateway.py
 │       └── integration/
-│           └── init.py
+│           └── __init__.py
 ├── frontend/
 │   └── src/
-│       ├── App.tsx                 ← token state, login/chat routing
-│       ├── Auth.tsx                ← login + register UI
-│       ├── Chat.tsx                ← streaming chat + file upload button (📎)
-│       ├── api.ts                  ← axios client, uploadFile(), buildWebSocketUrl()
-│       ├── index.css               ← Tailwind import
+│       ├── App.tsx
+│       ├── Auth.tsx
+│       ├── Chat.tsx
+│       ├── api.ts
+│       ├── index.css
 │       └── main.tsx
 ├── infra/
 │   └── postgres/
-│       └── init-multi-db.sh        ← creates eada + eada_app databases
-├── uploads/                        ← temp file storage (gitignored)
+│       └── init-multi-db.sh
+├── uploads/
 │   └── .gitkeep
-├── .env                            ← secrets (never committed)
+├── test_data.csv                   ← e2e test fixture
+├── test_e2e_phase4.py              ← e2e test script
+├── .env
 ├── .env.example
 ├── .gitignore
 ├── alembic.ini
-├── docker-compose.yml              ← postgres, redis, qdrant, langfuse
+├── docker-compose.yml
 ├── PROGRESS.md
 ├── pyproject.toml
 └── uv.lock
@@ -196,6 +220,10 @@ npm run dev
 12. **Google embeddings via LiteLLM**: LiteLLM does NOT support `gemini/text-embedding-*` — call Google REST API directly
 13. **Gemini embedding model**: `text-embedding-004` not available on free API keys — use `gemini-embedding-001` (3072 dim)
 14. **Qdrant client 1.18.0**: `.search()` removed — use `.query_points()` instead
+15. **auth/register returns 201** not 200 — check for both in test scripts
+16. **auth/token expects JSON** not form data
+17. **pytest discovery**: requires `[tool.pytest.ini_options]` in pyproject.toml with `testpaths` and `asyncio_mode=auto`
+18. **New files via PowerShell**: always use `New-Item -ItemType File -Path` first, then write content separately with `Set-Content -Encoding UTF8`
 
 ---
 
@@ -205,7 +233,7 @@ Phase 0 — Foundation                    ✅ DONE
 Phase 1 — Simple Chat Interface         ✅ DONE
 Phase 2 — Data File Analysis            ✅ DONE
 Phase 3 — RAG Pipeline                  ✅ DONE
-Phase 4 — Tool Calling & MCP            ⏭️ NEXT
+Phase 4 — Tool Calling & MCP            ✅ DONE
 Phase 5 — Full Agent Architecture (LangGraph, 8 specialized agents)
 Phase 6 — Multi-Agent Collaboration & Self-Correction
 Phase 7 — Interactive Dashboard (proper React frontend, auth, projects)
@@ -214,4 +242,4 @@ Phase 9 — Capstone Polish
 
 ---
 
-*Last updated: Phase 3 complete — RAG pipeline with Qdrant + Google embeddings working end-to-end. Next: Phase 4 Tool Calling & MCP.*
+*Last updated: Phase 4 complete — tool calling loop + MCP server verified live in browser. 33 unit tests passing. Next: Phase 5 Full Agent Architecture.*
