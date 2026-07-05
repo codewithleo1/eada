@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,8 +6,9 @@ from backend.config import settings
 from backend.observability.logging import setup_logging, get_logger
 from backend.observability.tracing import tracer
 from backend.api.routes import chat, health, auth, conversations, upload, ingest
+from backend.mcp import server as mcp_server
 
-# Setup logging immediately — before anything else
+# Setup logging immediately â€” before anything else
 setup_logging(debug=settings.app_debug)
 log = get_logger(__name__)
 
@@ -36,7 +37,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allows the React frontend to call this API
+# CORS â€” allows the React frontend to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],
@@ -53,6 +54,7 @@ app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(upload.router)
 app.include_router(ingest.router)
+app.include_router(mcp_server.router)
 
 
 @app.get("/")
@@ -63,3 +65,4 @@ async def root() -> dict:
         "status": "running",
         "docs": "/docs",
     }
+
