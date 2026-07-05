@@ -11,17 +11,30 @@ from backend.db.session import async_session_factory
 from backend.db.repositories import ConversationRepository, MessageRepository
 from backend.tools.file_tool import get_file_info, FileToolError
 from backend.tools.sql_tool import execute_query, SqlToolError
+from backend.rag.rag_pipeline import retrieve_context, build_rag_context, RAGPipelineError
 
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def _build_system_prompt(file_info: dict | None) -> str:
+def _build_system_prompt(file_info: dict | None, rag_context: str | None = None) -> str:
     """
     Build the system prompt.
     If a file is attached, include schema + sample so the LLM can write SQL.
+    If RAG context is provided, include retrieved document chunks.
     """
+    if rag_context is not None:
+        return f"""You are an expert analyst with access to relevant document sections.
+
+Use ONLY the following document context to answer the user's question.
+If the answer is not in the context, say "I don't have enough information in the document to answer that."
+
+DOCUMENT CONTEXT:
+{rag_context}
+
+Answer based on the context above. Be precise and cite specific figures when available."""
+
     if file_info is None:
         return (
             "You are an expert data analyst. "
@@ -102,6 +115,7 @@ async def websocket_chat(
     token: str = Query(..., description="JWT access token"),
     conversation_id: str | None = Query(None, description="Existing conversation UUID"),
     file_id: str | None = Query(None, description="UUID of an uploaded file to analyse"),
+    doc_id: str | None = Query(None, description="UUID of an ingested document for RAG Q&A"),
 ) -> None:
     """Protected, persistent WebSocket streaming chat endpoint.
 
@@ -155,6 +169,9 @@ async def websocket_chat(
             await websocket.close()
             return
 
+    # Log connection params
+    log.info("websocket_connected", user_id=user_id_str, file_id=file_id, doc_id=doc_id)
+    
     async with async_session_factory() as db:
         conv_repo = ConversationRepository(db)
         msg_repo = MessageRepository(db)
@@ -202,11 +219,19 @@ async def websocket_chat(
                     metadata={"conversation_id": str(conversation.id)},
                 )
 
-                # Build messages with system prompt (includes schema if file attached)
+                # Build RAG context if doc_id provided
+                rag_context = None
+                if doc_id:
+                    try:
+                        chunks = retrieve_context(user_message, top_k=5, doc_id=doc_id)
+                        rag_context = build_rag_context(chunks)
+                    except RAGPipelineError as e:
+                        log.error("rag_retrieval_failed", error=str(e))
+
                 messages = [
                     {
                         "role": "system",
-                        "content": _build_system_prompt(file_info),
+                        "content": _build_system_prompt(file_info, rag_context),
                     }
                 ]
                 for m in history:
