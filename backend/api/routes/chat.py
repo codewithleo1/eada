@@ -37,6 +37,7 @@ async def _run_agent_graph(
     file_id: str | None,
     doc_id: str | None,
     history: list[dict],
+    conversation_id: str = "",
 ) -> str:
     """
     Build initial AgentState and invoke the LangGraph agent pipeline.
@@ -64,6 +65,9 @@ async def _run_agent_graph(
         "next_agent": "router",
         "error": None,
         "iteration": 0,
+        "retry_count": 0,
+        "originating_agent": "",
+        "conversation_id": conversation_id,
     }
 
     log.info(
@@ -203,6 +207,7 @@ async def websocket_chat(
                     file_id=file_id,
                     doc_id=doc_id,
                     history=messages,
+                    conversation_id=str(conversation.id),
                 )
 
                 # Stream final answer to frontend token by token
@@ -231,3 +236,6 @@ async def websocket_chat(
         except Exception as e:
             log.error("websocket_error", user_id=user_id_str, error=str(e))
             await websocket.send_text(f"[ERROR] {str(e)}")
+
+
+

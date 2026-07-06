@@ -1,21 +1,21 @@
 ﻿"""
 analyst.py — Data Analyst agent for the EADA multi-agent graph.
-
 Handles all data file questions using the Phase 4 tool calling infrastructure.
 Calls get_file_schema then query_data via complete_with_tools().
-
 Reads:  state["user_message"], state["file_id"], state["plan"]
-Writes: state["sql_result"], state["final_answer"], state["next_agent"]
+Writes: state["sql_result"], state["final_answer"], state["next_agent"],
+        state["originating_agent"], state["retry_count"]
 """
 
 from __future__ import annotations
 
-from backend.agents.state import AgentState, AGENT_CRITIC
-from backend.llm.gateway import llm
-from backend.tools.registry import get_tools_for_context
-from backend.tools.executor import execute_tool_call
-from backend.observability.logging import get_logger
 import json
+
+from backend.agents.state import AgentState, AGENT_ANALYST, AGENT_CRITIC
+from backend.llm.gateway import llm
+from backend.tools.executor import execute_tool_call
+from backend.tools.registry import get_tools_for_context
+from backend.observability.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -26,24 +26,34 @@ async def analyst_node(state: AgentState) -> AgentState:
     """
     LangGraph node — answers data questions using SQL tool loop.
 
-    Reads:  state["user_message"], state["file_id"], state["plan"]
-    Writes: state["sql_result"], state["final_answer"], state["next_agent"]
+    Reads:  state["user_message"], state["file_id"], state["plan"], state["retry_count"]
+    Writes: state["sql_result"], state["final_answer"], state["next_agent"],
+            state["originating_agent"], state["retry_count"]
     """
     user_message = state.get("user_message", "")
     file_id = state.get("file_id")
     plan = state.get("plan", [])
+    retry_count = state.get("retry_count", 0)
+    critique = state.get("critique", "")
 
-    log.info("analyst.start", message=user_message[:80], file_id=file_id)
+    log.info("analyst.start", message=user_message[:80], file_id=file_id, retry=retry_count)
 
     if not file_id:
         log.warning("analyst.no_file")
         return {
             "final_answer": "No data file is attached. Please upload a file first.",
             "next_agent": AGENT_CRITIC,
+            "originating_agent": AGENT_ANALYST,
+            "retry_count": retry_count,
         }
 
-    # Use plan steps as context if available
+    # On retry, include critique in task so LLM knows what to fix
     task = "\n".join(plan) if plan else user_message
+    if retry_count > 0 and critique:
+        task = (
+            f"Previous answer was rejected with this feedback:\n{critique}\n\n"
+            f"Please try again and address the feedback.\n\nOriginal task:\n{task}"
+        )
 
     system_prompt = (
         "You are an expert data analyst. "
@@ -62,7 +72,7 @@ async def analyst_node(state: AgentState) -> AgentState:
     sql_result = {}
     final_answer = ""
 
-    # Tool calling loop — same pattern as Phase 4 chat.py
+    # Tool calling loop
     for iteration in range(MAX_TOOL_ITERATIONS):
         log.info("analyst.tool_iteration", iteration=iteration)
 
@@ -76,7 +86,6 @@ async def analyst_node(state: AgentState) -> AgentState:
             log.info("analyst.done", iterations=iteration + 1)
             break
 
-        # Execute each tool call
         tool_call_dicts = [
             {
                 "id": tc.id,
@@ -98,7 +107,6 @@ async def analyst_node(state: AgentState) -> AgentState:
             result_str = await execute_tool_call(tc.name, tc.arguments)
             log.info("analyst.tool_result", name=tc.name, length=len(result_str))
 
-            # Capture SQL result for state
             if tc.name == "query_data":
                 try:
                     sql_result = json.loads(result_str)
@@ -118,4 +126,6 @@ async def analyst_node(state: AgentState) -> AgentState:
         "sql_result": sql_result,
         "final_answer": final_answer,
         "next_agent": AGENT_CRITIC,
+        "originating_agent": AGENT_ANALYST,
+        "retry_count": retry_count + 1,
     }

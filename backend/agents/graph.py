@@ -1,11 +1,13 @@
 ﻿"""
 graph.py — LangGraph orchestrator for the EADA multi-agent system.
 
-Wires all agents into a stateful graph:
+Phase 6 update: self-correction loop added after Critic.
 
-START → router → [analyst | rag_agent | planner | summarizer] → critic → summarizer → END
-
-The conditional edge reads state["next_agent"] to decide routing.
+Graph flow:
+START → router → [analyst|rag_agent|planner|summarizer]
+               → critic → PASS       → summarizer → END
+                        → NEEDS_IMPROVEMENT + retry < 2 → analyst or rag_agent
+                        → NEEDS_IMPROVEMENT + retry >= 2 → summarizer → END
 """
 
 from __future__ import annotations
@@ -31,35 +33,74 @@ from backend.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+MAX_RETRIES = 2
+
 
 # ---------------------------------------------------------------------------
-# Conditional edge — reads next_agent from state
+# Conditional edge — after Router
 # ---------------------------------------------------------------------------
 
 def route_after_router(state: AgentState) -> str:
-    """
-    Called after the router node.
-    Returns the name of the next node to execute.
-    """
+    """Route to correct specialist after Router decides."""
     next_agent = state.get("next_agent", AGENT_SUMMARIZER)
     iteration = state.get("iteration", 0)
 
-    # Circuit breaker — force end if too many iterations
     if iteration >= MAX_ITERATIONS:
         log.warning("graph.circuit_breaker", iteration=iteration)
         return AGENT_SUMMARIZER
 
-    log.info("graph.routing", next_agent=next_agent)
+    log.info("graph.routing_after_router", next_agent=next_agent)
 
-    # Map agent names to node names
     valid_routes = {
         AGENT_ANALYST: AGENT_ANALYST,
         AGENT_RAG: AGENT_RAG,
         AGENT_PLANNER: AGENT_PLANNER,
         AGENT_SUMMARIZER: AGENT_SUMMARIZER,
     }
-
     return valid_routes.get(next_agent, AGENT_SUMMARIZER)
+
+
+# ---------------------------------------------------------------------------
+# Conditional edge — after Critic (self-correction)
+# ---------------------------------------------------------------------------
+
+def route_after_critic(state: AgentState) -> str:
+    """
+    Self-correction routing after Critic reviews the answer.
+
+    - PASS or retry limit hit → Summarizer
+    - NEEDS_IMPROVEMENT + retry < MAX_RETRIES → back to originating agent
+    """
+    critique = state.get("critique", "")
+    retry_count = state.get("retry_count", 0)
+    originating_agent = state.get("originating_agent", AGENT_SUMMARIZER)
+
+    needs_improvement = "NEEDS_IMPROVEMENT" in critique.upper()
+
+    if not needs_improvement:
+        log.info("graph.critic_pass", retry_count=retry_count)
+        return AGENT_SUMMARIZER
+
+    if retry_count >= MAX_RETRIES:
+        log.warning(
+            "graph.retry_limit_hit",
+            retry_count=retry_count,
+            max_retries=MAX_RETRIES,
+        )
+        return AGENT_SUMMARIZER
+
+    # Route back to originating agent for a retry
+    log.info(
+        "graph.self_correction",
+        retry_count=retry_count,
+        returning_to=originating_agent,
+    )
+
+    valid_retry_targets = {AGENT_ANALYST, AGENT_RAG}
+    if originating_agent in valid_retry_targets:
+        return originating_agent
+
+    return AGENT_SUMMARIZER
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +109,7 @@ def route_after_router(state: AgentState) -> str:
 
 def build_graph() -> StateGraph:
     """
-    Build the EADA multi-agent graph.
-
+    Build the EADA multi-agent graph with self-correction loop.
     Returns a compiled LangGraph StateGraph ready to invoke.
     """
     graph = StateGraph(AgentState)
@@ -85,7 +125,7 @@ def build_graph() -> StateGraph:
     # --- Entry point ---
     graph.set_entry_point(AGENT_ROUTER)
 
-    # --- Conditional routing after router ---
+    # --- Conditional routing after Router ---
     graph.add_conditional_edges(
         AGENT_ROUTER,
         route_after_router,
@@ -104,14 +144,22 @@ def build_graph() -> StateGraph:
     graph.add_edge(AGENT_ANALYST, AGENT_CRITIC)
     graph.add_edge(AGENT_RAG, AGENT_CRITIC)
 
-    # --- Critic always goes to summarizer ---
-    graph.add_edge(AGENT_CRITIC, AGENT_SUMMARIZER)
+    # --- Conditional routing after Critic (self-correction) ---
+    graph.add_conditional_edges(
+        AGENT_CRITIC,
+        route_after_critic,
+        {
+            AGENT_ANALYST: AGENT_ANALYST,
+            AGENT_RAG: AGENT_RAG,
+            AGENT_SUMMARIZER: AGENT_SUMMARIZER,
+        },
+    )
 
     # --- Summarizer ends the graph ---
     graph.add_edge(AGENT_SUMMARIZER, END)
 
     compiled = graph.compile()
-    log.info("graph.compiled")
+    log.info("graph.compiled_with_self_correction")
     return compiled
 
 

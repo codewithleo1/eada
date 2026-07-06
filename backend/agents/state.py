@@ -58,6 +58,9 @@ class AgentState(TypedDict, total=False):
     next_agent: str
     error: str | None
     iteration: int
+    retry_count: int
+    originating_agent: str
+    conversation_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -84,3 +87,5 @@ VALID_AGENTS = {
 
 # Maximum agent iterations before forcing a response (circuit breaker)
 MAX_ITERATIONS = 10
+
+

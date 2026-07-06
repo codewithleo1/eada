@@ -1,16 +1,16 @@
 ﻿"""
 rag_agent.py — RAG agent for the EADA multi-agent graph.
-
 Handles document questions using the Phase 3 RAG pipeline.
 Retrieves relevant chunks from Qdrant then generates an answer.
 
-Reads:  state["user_message"], state["doc_id"], state["plan"]
-Writes: state["rag_context"], state["final_answer"], state["next_agent"]
+Reads:  state["user_message"], state["doc_id"], state["plan"], state["retry_count"]
+Writes: state["rag_context"], state["final_answer"], state["next_agent"],
+        state["originating_agent"], state["retry_count"]
 """
 
 from __future__ import annotations
 
-from backend.agents.state import AgentState, AGENT_CRITIC
+from backend.agents.state import AgentState, AGENT_RAG, AGENT_CRITIC
 from backend.rag.rag_pipeline import retrieve_context, build_rag_context, RAGPipelineError
 from backend.llm.gateway import llm
 from backend.observability.logging import get_logger
@@ -22,24 +22,31 @@ async def rag_agent_node(state: AgentState) -> AgentState:
     """
     LangGraph node — answers document questions using RAG.
 
-    Reads:  state["user_message"], state["doc_id"], state["plan"]
-    Writes: state["rag_context"], state["final_answer"], state["next_agent"]
+    Reads:  state["user_message"], state["doc_id"], state["plan"], state["retry_count"]
+    Writes: state["rag_context"], state["final_answer"], state["next_agent"],
+            state["originating_agent"], state["retry_count"]
     """
     user_message = state.get("user_message", "")
     doc_id = state.get("doc_id")
     plan = state.get("plan", [])
+    retry_count = state.get("retry_count", 0)
+    critique = state.get("critique", "")
 
-    log.info("rag_agent.start", message=user_message[:80], doc_id=doc_id)
+    log.info("rag_agent.start", message=user_message[:80], doc_id=doc_id, retry=retry_count)
 
     if not doc_id:
         log.warning("rag_agent.no_doc")
         return {
             "final_answer": "No document is attached. Please ingest a document first.",
             "next_agent": AGENT_CRITIC,
+            "originating_agent": AGENT_RAG,
+            "retry_count": retry_count,
         }
 
-    # Use plan steps as search query if available
+    # On retry, include critique in query so retrieval targets the gap
     query = "\n".join(plan) if plan else user_message
+    if retry_count > 0 and critique:
+        query = f"{user_message}\n\nPrevious feedback to address:\n{critique}"
 
     # Retrieve relevant chunks from Qdrant
     try:
@@ -51,12 +58,22 @@ async def rag_agent_node(state: AgentState) -> AgentState:
             "rag_context": "",
             "final_answer": f"Document retrieval failed: {e}",
             "next_agent": AGENT_CRITIC,
+            "originating_agent": AGENT_RAG,
+            "retry_count": retry_count + 1,
             "error": str(e),
         }
 
     log.info("rag_agent.retrieved", num_chunks=len(chunks))
 
-    # Generate answer using retrieved context
+    # On retry, include critique in prompt so LLM knows what to fix
+    if retry_count > 0 and critique:
+        user_prompt = (
+            f"Previous answer was rejected with this feedback:\n{critique}\n\n"
+            f"Please try again and address the feedback.\n\nOriginal question:\n{user_message}"
+        )
+    else:
+        user_prompt = user_message
+
     system_prompt = (
         "You are an expert analyst with access to relevant document sections. "
         "Use ONLY the following document context to answer the question. "
@@ -66,7 +83,7 @@ async def rag_agent_node(state: AgentState) -> AgentState:
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": user_prompt},
     ]
 
     try:
@@ -77,6 +94,8 @@ async def rag_agent_node(state: AgentState) -> AgentState:
             "rag_context": rag_context,
             "final_answer": f"Answer generation failed: {e}",
             "next_agent": AGENT_CRITIC,
+            "originating_agent": AGENT_RAG,
+            "retry_count": retry_count + 1,
             "error": str(e),
         }
 
@@ -86,4 +105,6 @@ async def rag_agent_node(state: AgentState) -> AgentState:
         "rag_context": rag_context,
         "final_answer": final_answer,
         "next_agent": AGENT_CRITIC,
+        "originating_agent": AGENT_RAG,
+        "retry_count": retry_count + 1,
     }
