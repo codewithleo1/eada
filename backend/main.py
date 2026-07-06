@@ -1,14 +1,13 @@
 ﻿from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from backend.config import settings
 from backend.observability.logging import setup_logging, get_logger
 from backend.observability.tracing import tracer
 from backend.api.routes import chat, health, auth, conversations, upload, ingest
 from backend.mcp import server as mcp_server
 
-# Setup logging immediately â€” before anything else
+# Setup logging immediately -- before anything else
 setup_logging(debug=settings.app_debug)
 log = get_logger(__name__)
 
@@ -16,14 +15,13 @@ log = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage startup and shutdown events.
-    
+
     Everything before 'yield' runs on startup.
     Everything after 'yield' runs on shutdown.
     """
     # Startup
     log.info("app_starting", env=settings.app_env)
     log.info("llm_config", primary=settings.primary_model)
-
     yield
     # Shutdown
     log.info("app_stopping")
@@ -37,15 +35,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS â€” allows the React frontend to call this API
+# CORS -- driven by config so dev and prod use different origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # Register routers
 app.include_router(health.router)
@@ -65,4 +62,3 @@ async def root() -> dict:
         "status": "running",
         "docs": "/docs",
     }
-

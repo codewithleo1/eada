@@ -9,7 +9,6 @@ Tests the self-correction routing logic:
   - Invalid originating_agent → summarizer
 """
 
-import pytest
 from backend.agents.graph import route_after_critic
 from backend.agents.state import AGENT_ANALYST, AGENT_RAG, AGENT_SUMMARIZER
 

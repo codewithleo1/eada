@@ -10,7 +10,7 @@ All external dependencies are mocked:
 
 import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from backend.tools.executor import (
     _resolve_file_path,
     execute_tool_call,

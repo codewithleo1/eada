@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+﻿from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -8,10 +8,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
     # App
     app_env: str = Field(default="development", alias="APP_ENV")
-    app_debug: bool = Field(default=True, alias="APP_DEBUG")
+    app_debug: bool = Field(default=False, alias="APP_DEBUG")
+    allowed_origins: str = Field(default="http://localhost,http://localhost:5173", alias="ALLOWED_ORIGINS")
 
     # LLM
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="supersecretkey", alias="SECRET_KEY")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",")]
 
 
 # Single instance imported everywhere
