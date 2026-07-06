@@ -1,24 +1,21 @@
-"""
-chat.py — WebSocket chat endpoint with agentic tool-calling loop.
+﻿"""
+chat.py — WebSocket chat endpoint with multi-agent graph.
 
 Flow per user message:
-  1. Build messages list (system prompt + conversation history)
-  2. Get tools relevant to this session (file? doc?)
-  3. Call LLM with tools → get ToolCallResponse
-  4. If LLM wants a tool → execute it, append result, go to 3
-  5. Repeat until LLM gives final text answer (max 5 iterations)
-  6. Stream final answer to frontend token by token
-  7. Persist full exchange to DB
+  1. Build initial AgentState from message + context
+  2. Invoke agent_graph — LangGraph runs full pipeline
+  3. Extract final_answer from returned state
+  4. Stream final answer to frontend token by token
+  5. Persist full exchange to DB
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from backend.llm.gateway import llm, ToolCallResponse
-from backend.tools.registry import get_tools_for_context
-from backend.tools.executor import execute_tool_call
+from backend.llm.gateway import llm
+from backend.agents.graph import agent_graph
+from backend.agents.state import AgentState
 from backend.observability.logging import get_logger
 from backend.observability.tracing import tracer
 from backend.api.middleware.auth import verify_token
@@ -30,127 +27,67 @@ log = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Safety ceiling for the agentic tool-calling loop
-MAX_TOOL_ITERATIONS = 5
-
 
 # ---------------------------------------------------------------------------
-# System prompt
+# Agent graph runner
 # ---------------------------------------------------------------------------
 
-def _build_system_prompt(
-    has_file: bool = False,
-    has_doc: bool = False,
+async def _run_agent_graph(
+    user_message: str,
+    file_id: str | None,
+    doc_id: str | None,
+    history: list[dict],
 ) -> str:
     """
-    Build the system prompt for the current session.
-
-    No file schema or RAG context is injected here — the LLM pulls
-    that information itself by calling get_file_schema or retrieve_context.
-    """
-    base = (
-        "You are EADA, an expert autonomous data analyst. "
-        "Answer questions clearly and concisely. "
-        "Think step by step before acting. "
-    )
-
-    if has_file and has_doc:
-        return base + (
-            "You have access to an uploaded data file and an ingested document. "
-            "Use get_file_schema to inspect the file before querying it. "
-            "Use query_data to run SQL against the file. "
-            "Use retrieve_context to search the document for relevant information."
-        )
-
-    if has_file:
-        return base + (
-            "You have access to an uploaded data file. "
-            "Always call get_file_schema first to understand the columns, "
-            "then call query_data to answer questions about the data. "
-            "Use DuckDB SQL syntax. The table name is always 'data'."
-        )
-
-    if has_doc:
-        return base + (
-            "You have access to an ingested document. "
-            "Use retrieve_context to find relevant sections before answering."
-        )
-
-    return base + "Answer questions using your knowledge."
-
-
-# ---------------------------------------------------------------------------
-# Tool-calling agentic loop
-# ---------------------------------------------------------------------------
-
-async def _run_tool_loop(
-    messages: list[dict],
-    tools: list[dict],
-) -> tuple[str, list[dict]]:
-    """
-    Run the agentic tool-calling loop until the LLM gives a final answer.
+    Build initial AgentState and invoke the LangGraph agent pipeline.
 
     Args:
-        messages: Full conversation history in OpenAI format.
-        tools:    Tool definitions from registry.
+        user_message: current user message
+        file_id:      uploaded file UUID or None
+        doc_id:       ingested document UUID or None
+        history:      conversation history in OpenAI format
 
     Returns:
-        Tuple of:
-          - final_text: the LLM's final answer as a plain string
-          - messages:   updated messages list including all tool exchanges
-                        (caller should persist the assistant's final message)
+        final_answer string from the agent graph
     """
-    for iteration in range(MAX_TOOL_ITERATIONS):
-        log.info("tool_loop_iteration", iteration=iteration)
+    initial_state: AgentState = {
+        "messages": history,
+        "user_message": user_message,
+        "file_id": file_id,
+        "doc_id": doc_id,
+        "plan": [],
+        "sql_result": {},
+        "rag_context": "",
+        "code_result": "",
+        "critique": "",
+        "final_answer": "",
+        "next_agent": "router",
+        "error": None,
+        "iteration": 0,
+    }
 
-        # Ask the LLM — it returns text OR tool call requests
-        response: ToolCallResponse = await llm.complete_with_tools(
-            messages=messages,
-            tools=tools,
-        )
+    log.info(
+        "agent_graph.invoke",
+        message=user_message[:80],
+        file_id=file_id,
+        doc_id=doc_id,
+    )
 
-        # LLM gave a final text answer — we are done
-        if not response.wants_tool:
-            final_text = response.text or ""
-            log.info("tool_loop_complete", iterations=iteration + 1)
-            return final_text, messages
+    try:
+        result_state = await agent_graph.ainvoke(initial_state)
+        final_answer = result_state.get("final_answer", "")
 
-        # LLM wants to call tools — execute each one and collect results
-        # First append the assistant's tool-call message to history
-        # so the LLM sees its own request in the next turn
-        tool_call_dicts = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.name,
-                    "arguments": json.dumps(tc.arguments),
-                },
-            }
-            for tc in response.tool_calls
-        ]
-        messages.append({
-            "role": "assistant",
-            "tool_calls": tool_call_dicts,
-            "content": None,
-        })
+        if not final_answer:
+            final_answer = "I was unable to generate an answer. Please try again."
 
-        # Execute each tool call and append results as tool messages
-        for tc in response.tool_calls:
-            log.info("executing_tool", name=tc.name, args=tc.arguments)
-            result_str = await execute_tool_call(tc.name, tc.arguments)
-            log.info("tool_result", name=tc.name, result_length=len(result_str))
+        log.info("agent_graph.done", answer_length=len(final_answer))
+        return final_answer
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result_str,
-            })
-
-    # Iteration ceiling hit — ask LLM for best-effort answer with what it has
-    log.warning("tool_loop_ceiling_hit", max_iterations=MAX_TOOL_ITERATIONS)
-    fallback = await llm.complete(messages=messages)
-    return fallback, messages
+    except Exception as e:
+        log.error("agent_graph.failed", error=str(e))
+        # Fall back to direct LLM call if graph fails
+        fallback = await llm.complete(messages=history)
+        return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -193,19 +130,12 @@ async def websocket_chat(
 
     await websocket.accept()
 
-    has_file = file_id is not None
-    has_doc = doc_id is not None
-
     log.info(
         "websocket_connected",
         user_id=user_id_str,
         file_id=file_id,
         doc_id=doc_id,
     )
-
-    # Pre-build tools and system prompt once per connection
-    tools = get_tools_for_context(has_file=has_file, has_doc=has_doc)
-    system_prompt = _build_system_prompt(has_file=has_file, has_doc=has_doc)
 
     async with async_session_factory() as db:
         conv_repo = ConversationRepository(db)
@@ -229,14 +159,6 @@ async def websocket_chat(
             "type": "conversation_id",
             "value": str(conversation.id),
         })
-
-        # Inject file_id and doc_id into system prompt so LLM knows the IDs
-        # to pass when calling tools — it cannot guess them
-        enriched_system = system_prompt
-        if file_id:
-            enriched_system += f"\n\nThe uploaded file ID is: {file_id}"
-        if doc_id:
-            enriched_system += f"\n\nThe ingested document ID is: {doc_id}"
 
         try:
             while True:
@@ -270,26 +192,20 @@ async def websocket_chat(
                     metadata={"conversation_id": str(conversation.id)},
                 )
 
-                # Build full messages list for this turn
-                messages: list[dict] = [
-                    {"role": "system", "content": enriched_system}
-                ]
+                # Build history in OpenAI format for agent graph
+                messages = []
                 for m in history:
                     messages.append({"role": m.role, "content": m.content})
 
-                # --- Agentic tool loop ---
-                if tools:
-                    final_answer, _ = await _run_tool_loop(
-                        messages=messages,
-                        tools=tools,
-                    )
-                else:
-                    # No tools available — plain completion
-                    final_answer = await llm.complete(messages=messages)
+                # --- Run multi-agent graph ---
+                final_answer = await _run_agent_graph(
+                    user_message=user_message,
+                    file_id=file_id,
+                    doc_id=doc_id,
+                    history=messages,
+                )
 
                 # Stream final answer to frontend token by token
-                # We simulate streaming by chunking the completed text
-                # (tool loop uses non-streaming complete_with_tools internally)
                 chunk_size = 20
                 for i in range(0, len(final_answer), chunk_size):
                     await websocket.send_text(final_answer[i:i + chunk_size])
