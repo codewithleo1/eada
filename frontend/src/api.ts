@@ -1,4 +1,4 @@
-import axios from "axios";
+﻿import axios from "axios";
 
 const API_BASE = "http://localhost:8000";
 
@@ -36,6 +36,13 @@ export interface UploadResponse {
   columns: { name: string; dtype: string }[];
   sample: Record<string, unknown>[];
   message: string;
+}
+
+export interface IngestResponse {
+  doc_id: string;
+  source: string;
+  num_chunks: number;
+  embedding_dim: number;
 }
 
 export async function register(
@@ -95,13 +102,30 @@ export async function uploadFile(
   return res.data;
 }
 
+export async function ingestDocument(
+  token: string,
+  file: File
+): Promise<IngestResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post<IngestResponse>("/ingest", formData, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "multipart/form-data",
+    },
+  });
+  return res.data;
+}
+
 export function buildWebSocketUrl(
   token: string,
   conversationId?: string,
-  fileId?: string
+  fileId?: string,
+  docId?: string
 ): string {
   let url = `ws://localhost:8000/chat/ws?token=${token}`;
   if (conversationId) url += `&conversation_id=${conversationId}`;
   if (fileId) url += `&file_id=${fileId}`;
+  if (docId) url += `&doc_id=${docId}`;
   return url;
 }
