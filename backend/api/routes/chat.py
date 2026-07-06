@@ -3,8 +3,8 @@ chat.py — WebSocket chat endpoint with multi-agent graph.
 
 Flow per user message:
   1. Build initial AgentState from message + context
-  2. Invoke agent_graph — LangGraph runs full pipeline
-  3. Extract final_answer from returned state
+  2. Stream agent_graph events — emit agent activity to frontend
+  3. Extract final_answer from the last graph state
   4. Stream final answer to frontend token by token
   5. Persist full exchange to DB
 """
@@ -27,30 +27,22 @@ log = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# Nodes we want to surface to the frontend as agent activity
+AGENT_NODES = {"router", "planner", "analyst", "rag_agent", "critic", "summarizer"}
+
 
 # ---------------------------------------------------------------------------
-# Agent graph runner
+# Agent graph runner — streams agent events then returns final answer
 # ---------------------------------------------------------------------------
 
 async def _run_agent_graph(
+    websocket: WebSocket,
     user_message: str,
     file_id: str | None,
     doc_id: str | None,
     history: list[dict],
     conversation_id: str = "",
 ) -> str:
-    """
-    Build initial AgentState and invoke the LangGraph agent pipeline.
-
-    Args:
-        user_message: current user message
-        file_id:      uploaded file UUID or None
-        doc_id:       ingested document UUID or None
-        history:      conversation history in OpenAI format
-
-    Returns:
-        final_answer string from the agent graph
-    """
     initial_state: AgentState = {
         "messages": history,
         "user_message": user_message,
@@ -71,15 +63,28 @@ async def _run_agent_graph(
     }
 
     log.info(
-        "agent_graph.invoke",
+        "agent_graph.stream_start",
         message=user_message[:80],
         file_id=file_id,
         doc_id=doc_id,
     )
 
+    final_answer = ""
+
     try:
-        result_state = await agent_graph.ainvoke(initial_state)
-        final_answer = result_state.get("final_answer", "")
+        async for event in agent_graph.astream_events(initial_state, version="v2"):
+            kind = event.get("event", "")
+            name = event.get("name", "")
+
+            # Fire agent activity indicator when a known node starts
+            if kind == "on_chain_start" and name in AGENT_NODES:
+                await websocket.send_json({"type": "agent", "value": name})
+                log.info("agent_node_start", node=name)
+
+            # Capture final state when the top-level graph finishes
+            if kind == "on_chain_end" and name == "LangGraph":
+                output = event.get("data", {}).get("output", {})
+                final_answer = output.get("final_answer", "")
 
         if not final_answer:
             final_answer = "I was unable to generate an answer. Please try again."
@@ -89,7 +94,6 @@ async def _run_agent_graph(
 
     except Exception as e:
         log.error("agent_graph.failed", error=str(e))
-        # Fall back to direct LLM call if graph fails
         fallback = await llm.complete(messages=history)
         return fallback
 
@@ -106,16 +110,6 @@ async def websocket_chat(
     file_id: str | None = Query(None, description="UUID of an uploaded file to analyse"),
     doc_id: str | None = Query(None, description="UUID of an ingested document for RAG Q&A"),
 ) -> None:
-    """
-    Protected, persistent WebSocket streaming chat endpoint.
-
-    Connect with:
-        ws://localhost:8000/chat/ws?token=<jwt>
-        ws://localhost:8000/chat/ws?token=<jwt>&conversation_id=<uuid>
-        ws://localhost:8000/chat/ws?token=<jwt>&file_id=<uuid>
-        ws://localhost:8000/chat/ws?token=<jwt>&doc_id=<uuid>
-        ws://localhost:8000/chat/ws?token=<jwt>&file_id=<uuid>&doc_id=<uuid>
-    """
     # --- Auth ---
     try:
         payload = verify_token(token)
@@ -196,13 +190,14 @@ async def websocket_chat(
                     metadata={"conversation_id": str(conversation.id)},
                 )
 
-                # Build history in OpenAI format for agent graph
+                # Build history in OpenAI format
                 messages = []
                 for m in history:
                     messages.append({"role": m.role, "content": m.content})
 
-                # --- Run multi-agent graph ---
+                # --- Run multi-agent graph with live agent events ---
                 final_answer = await _run_agent_graph(
+                    websocket=websocket,
                     user_message=user_message,
                     file_id=file_id,
                     doc_id=doc_id,
@@ -210,7 +205,7 @@ async def websocket_chat(
                     conversation_id=str(conversation.id),
                 )
 
-                # Stream final answer to frontend token by token
+                # Stream final answer token by token
                 chunk_size = 20
                 for i in range(0, len(final_answer), chunk_size):
                     await websocket.send_text(final_answer[i:i + chunk_size])
@@ -236,6 +231,3 @@ async def websocket_chat(
         except Exception as e:
             log.error("websocket_error", user_id=user_id_str, error=str(e))
             await websocket.send_text(f"[ERROR] {str(e)}")
-
-
-
