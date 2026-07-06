@@ -16,7 +16,7 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ — Phase 6 Multi-Agent Collaboration NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ — Phase 7 Interactive Dashboard NEXT
 
 ---
 
@@ -40,55 +40,64 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 - `backend/db/migrations/` — Alembic async migrations (env.py rewritten for asyncpg)
 - `backend/db/repositories.py` — `UserRepository`, `ConversationRepository`, `MessageRepository`
 - `backend/api/routes/auth.py` — `POST /auth/register` and `POST /auth/token` (real DB, argon2 hashing)
-- `backend/api/routes/chat.py` — persistent multi-turn WebSocket; full history sent to Gemini every turn
+- `backend/api/routes/chat.py` — persistent multi-turn WebSocket
 - `backend/api/routes/conversations.py` — `GET /conversations` and `GET /conversations/{id}`
-- `backend/api/deps.py` — FastAPI dependency injection for DB sessions and repositories
+- `backend/api/deps.py` — FastAPI dependency injection
 - `frontend/` — Vite + React + TypeScript + Tailwind CSS
-- `frontend/src/Auth.tsx` — login/register screen
-- `frontend/src/Chat.tsx` — streaming chat UI with WebSocket client
-- `frontend/src/App.tsx` — session persistence via localStorage
-- `frontend/src/api.ts` — centralized API client (axios + WebSocket URL builder)
 - Dependencies: `sqlalchemy`, `asyncpg`, `alembic`, `python-jose`, `passlib[argon2]`, `argon2-cffi`, `redis`
 
 ### Phase 2 — Data File Analysis ✅ COMPLETE
 - `backend/tools/file_tool.py` — reads CSV, Excel, JSON, Parquet; extracts schema + sample rows
 - `backend/tools/sql_tool.py` — executes DuckDB SQL in-process against uploaded files
-- `backend/api/routes/upload.py` — `POST /upload` endpoint; saves with UUID filename, returns file_id + schema
+- `backend/api/routes/upload.py` — `POST /upload` endpoint
 - Dependencies: `duckdb==1.5.4`, `pandas==3.0.3`, `openpyxl`, `python-multipart`
 
 ### Phase 3 — RAG Pipeline ✅ COMPLETE
-- `backend/rag/chunker.py` — splits PDF/DOCX/TXT/MD into overlapping chunks (1500 chars, 200 overlap)
-- `backend/rag/embedder.py` — embeds text via Google `gemini-embedding-001` (3072 dim, direct REST API)
-- `backend/rag/vector_store.py` — stores and searches chunks in Qdrant using `query_points()` (v1.18.0+)
+- `backend/rag/chunker.py` — splits PDF/DOCX/TXT/MD into overlapping chunks
+- `backend/rag/embedder.py` — embeds text via Google `gemini-embedding-001` (3072 dim)
+- `backend/rag/vector_store.py` — Qdrant upsert + `query_points()` search
 - `backend/rag/rag_pipeline.py` — orchestrates ingest and retrieve flows
-- `backend/api/routes/ingest.py` — `POST /ingest` endpoint; chunks, embeds, stores in Qdrant; returns `doc_id`
+- `backend/api/routes/ingest.py` — `POST /ingest` endpoint
 - Dependencies: `qdrant-client==1.18.0`, `pymupdf==1.28.0`, `python-docx==1.2.0`
 
 ### Phase 4 — Tool Calling & MCP ✅ COMPLETE
 - `backend/tools/registry.py` — tool catalogue; `get_tools_for_context(has_file, has_doc)`
 - `backend/tools/executor.py` — tool router; maps LLM tool calls to real Python functions
 - `backend/llm/gateway.py` — added `ToolCallRequest`, `ToolCallResponse`, `complete_with_tools()`
-- `backend/mcp/server.py` — MCP HTTP server; `GET /mcp/tools`, `POST /mcp/tools/call`, `GET /mcp/health`
-- `backend/tests/unit/test_registry.py` — 8 tests
-- `backend/tests/unit/test_executor.py` — 13 tests
-- `backend/tests/unit/test_gateway.py` — 10 tests
-- `test_e2e_phase4.py` — end-to-end test script
-- `pyproject.toml` — added `[tool.pytest.ini_options]`
-- Total unit tests: 33 passing
+- `backend/mcp/server.py` — MCP HTTP server; `/mcp/tools`, `/mcp/tools/call`, `/mcp/health`
+- Unit tests: 33 passing
 
 ### Phase 5 — Full Agent Architecture ✅ COMPLETE
-- `backend/agents/state.py` — `AgentState` TypedDict; all agent fields; `VALID_AGENTS`, `MAX_ITERATIONS=10`
-- `backend/agents/router.py` — LLM-based routing; reads message + context; writes `next_agent`
-- `backend/agents/planner.py` — breaks complex requests into ordered steps; writes `plan`
-- `backend/agents/analyst.py` — data questions via tool loop; writes `sql_result`, `final_answer`
-- `backend/agents/rag_agent.py` — document questions via Qdrant; writes `rag_context`, `final_answer`
-- `backend/agents/critic.py` — reviews answer quality; writes `critique`
-- `backend/agents/critic.py` — also contains `summarizer_node`; polishes final answer; writes `final_answer`
-- `backend/agents/graph.py` — LangGraph `StateGraph`; compiles all agents into executable pipeline
-- `backend/api/routes/chat.py` — rewritten; uses `agent_graph.ainvoke()` instead of tool loop
+- `backend/agents/state.py` — `AgentState` TypedDict; all agent fields
+- `backend/agents/router.py` — LLM-based routing
+- `backend/agents/planner.py` — multi-step planner
+- `backend/agents/analyst.py` — data analyst agent with tool loop
+- `backend/agents/rag_agent.py` — RAG document agent
+- `backend/agents/critic.py` — critic + summarizer agents
+- `backend/agents/graph.py` — LangGraph compiled graph
+- `backend/api/routes/chat.py` — uses `agent_graph.ainvoke()`
 - Dependencies: `langgraph==1.2.2`
 - Graph flow: START → router → [analyst|rag_agent|planner|summarizer] → critic → summarizer → END
-- Verified live: multi-agent pipeline produces better formatted answers than Phase 4 tool loop
+
+### Phase 6 — Multi-Agent Collaboration & Self-Correction ✅ COMPLETE
+- `backend/agents/state.py` — added `retry_count`, `originating_agent`, `conversation_id` fields
+- `backend/agents/graph.py` — added `route_after_critic()` self-correction conditional edge
+  - PASS → summarizer
+  - NEEDS_IMPROVEMENT + retry < 2 → back to originating agent
+  - NEEDS_IMPROVEMENT + retry >= 2 → summarizer (circuit breaker)
+- `backend/agents/analyst.py` — writes `originating_agent`, `retry_count`; uses critique on retry
+- `backend/agents/rag_agent.py` — writes `originating_agent`, `retry_count`; uses critique on retry
+- `backend/memory/agent_memory.py` — Redis-backed key-value memory; namespaced by conversation_id
+  - `remember(key, value, ttl)` — store with expiry
+  - `recall(key)` — retrieve or None
+  - `forget(key)` / `forget_all()` — delete
+- `backend/evaluation/scorer.py` — LLM-based response scorer
+  - Relevance (40%), Completeness (40%), Clarity (20%)
+  - Scores 1-5 per dimension, normalised to 0.0-1.0
+  - `passed=True` if `final_score >= 0.6`
+- `backend/api/routes/chat.py` — passes `conversation_id` into agent graph
+- New unit tests: `test_scorer.py` (13), `test_agent_memory.py` (11), `test_graph.py` (11)
+- Total unit tests: 68 passing
 
 ---
 
@@ -101,16 +110,16 @@ EADA/
 │   ├── config.py
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── state.py                ← AgentState TypedDict
+│   │   ├── state.py                ← AgentState TypedDict + retry_count, originating_agent, conversation_id
 │   │   ├── router.py               ← LLM-based router
 │   │   ├── planner.py              ← multi-step planner
-│   │   ├── analyst.py              ← data analyst agent
-│   │   ├── rag_agent.py            ← RAG document agent
-│   │   ├── critic.py               ← critic + summarizer agents
-│   │   └── graph.py                ← LangGraph compiled graph
+│   │   ├── analyst.py              ← data analyst + self-correction aware
+│   │   ├── rag_agent.py            ← RAG agent + self-correction aware
+│   │   ├── critic.py               ← critic + summarizer
+│   │   └── graph.py                ← LangGraph graph + route_after_critic
 │   ├── api/routes/
 │   │   ├── auth.py
-│   │   ├── chat.py                 ← uses agent_graph.ainvoke()
+│   │   ├── chat.py                 ← agent_graph.ainvoke() + conversation_id
 │   │   ├── conversations.py
 │   │   ├── health.py
 │   │   ├── ingest.py
@@ -120,10 +129,16 @@ EADA/
 │   │   ├── repositories.py
 │   │   ├── session.py
 │   │   └── migrations/
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   └── scorer.py               ← LLM-based response scorer
 │   ├── llm/gateway.py              ← complete_with_tools(), ToolCallRequest, ToolCallResponse
 │   ├── mcp/
 │   │   ├── __init__.py
-│   │   └── server.py               ← MCP HTTP server
+│   │   └── server.py
+│   ├── memory/
+│   │   ├── __init__.py
+│   │   └── agent_memory.py         ← Redis-backed agent memory
 │   ├── observability/
 │   │   ├── logging.py
 │   │   └── tracing.py
@@ -141,7 +156,10 @@ EADA/
 │       ├── test_health.py
 │       ├── test_registry.py
 │       ├── test_executor.py
-│       └── test_gateway.py
+│       ├── test_gateway.py
+│       ├── test_scorer.py
+│       ├── test_agent_memory.py
+│       └── test_graph.py
 ├── frontend/src/
 │   ├── App.tsx
 │   ├── Auth.tsx
@@ -219,6 +237,8 @@ npm run dev
 20. **LangGraph state**: must be `TypedDict` not Pydantic; use `Annotated[list, operator.add]` for append-only fields
 21. **LangGraph compile**: always call `graph.compile()` — validates all edges and node signatures
 22. **ruff unused imports**: always fix with `uv run ruff check --fix` before committing
+23. **Self-correction loop**: `retry_count` increments in analyst/rag_agent on every run — circuit breaker MAX_RETRIES=2
+24. **AgentMemory**: Redis failure is non-fatal — always returns None on error, never raises
 
 ---
 
@@ -230,11 +250,11 @@ Phase 2 — Data File Analysis            ✅ DONE
 Phase 3 — RAG Pipeline                  ✅ DONE
 Phase 4 — Tool Calling & MCP            ✅ DONE
 Phase 5 — Full Agent Architecture       ✅ DONE
-Phase 6 — Multi-Agent Collaboration & Self-Correction
+Phase 6 — Multi-Agent Collaboration     ✅ DONE
 Phase 7 — Interactive Dashboard
 Phase 8 — Production Deployment
 Phase 9 — Capstone Polish
 
 ---
 
-*Last updated: Phase 5 complete — LangGraph multi-agent pipeline verified live. Router → Analyst → Critic → Summarizer working end-to-end. 33 unit tests passing. Next: Phase 6 Multi-Agent Collaboration & Self-Correction.*
+*Last updated: Phase 6 complete — self-correction loop, Redis agent memory, evaluation scorer. 68 unit tests passing. Next: Phase 7 Interactive Dashboard.*
