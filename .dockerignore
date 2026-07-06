@@ -1,0 +1,23 @@
+﻿# Python
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+
+# Node
+frontend/node_modules
+frontend/.next
+frontend/dist
+
+# Git
+.git
+.gitignore
+
+# Local env
+.env
+uploads/
+
+# Test files
+test_*.py

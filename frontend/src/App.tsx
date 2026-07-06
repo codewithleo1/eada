@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import Auth from "./Auth";
 import Chat from "./Chat";
 import "./App.css";
@@ -7,9 +7,6 @@ const TOKEN_KEY = "eada_token";
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<string | undefined>(
-    undefined
-  );
 
   useEffect(() => {
     const saved = localStorage.getItem(TOKEN_KEY);
@@ -24,7 +21,6 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
-    setConversationId(undefined);
   }
 
   if (!token) {
@@ -34,8 +30,6 @@ export default function App() {
   return (
     <Chat
       token={token}
-      conversationId={conversationId}
-      onConversationStarted={setConversationId}
       onLogout={handleLogout}
     />
   );
