@@ -211,7 +211,7 @@ EADA/
 
 ```powershell
 # 1. Reload uv PATH
-$env:Path = "C:\Users\suraj\.local\bin;$env:Path"
+$env:Path = "C:\Users\<your-username>\.local\bin;$env:Path"
 
 # 2. Start Docker Desktop manually (GUI), wait for it to be ready
 
@@ -248,7 +248,7 @@ npm run dev
 4. **`.gitignore` pattern**: use `/test_*.py` not `test_*.py`
 5. **Shared Postgres DB**: Langfuse uses `eada`, app uses `eada_app`
 6. **Docker init script**: must have LF line endings, not CRLF
-7. **uv PATH**: run `$env:Path = "C:\Users\suraj\.local\bin;$env:Path"` every new terminal
+7. **uv PATH**: run `$env:Path = "C:\Users\<your-username>\.local\bin;$env:Path"` every new terminal
 8. **Docker Desktop**: must be started manually after system restart
 9. **frontend npm commands**: must be run from inside `frontend/` folder
 10. **DuckDB + CSV encoding**: use pandas bridge via `_execute_on_file`
