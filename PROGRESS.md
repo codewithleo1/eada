@@ -16,7 +16,7 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ — Phase 7 Interactive Dashboard NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ Phase 7 ✅ Phase 8 ✅ — Phase 9 Capstone Polish NEXT
 
 ---
 
@@ -82,23 +82,33 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 ### Phase 6 — Multi-Agent Collaboration & Self-Correction ✅ COMPLETE
 - `backend/agents/state.py` — added `retry_count`, `originating_agent`, `conversation_id` fields
 - `backend/agents/graph.py` — added `route_after_critic()` self-correction conditional edge
-  - PASS → summarizer
-  - NEEDS_IMPROVEMENT + retry < 2 → back to originating agent
-  - NEEDS_IMPROVEMENT + retry >= 2 → summarizer (circuit breaker)
 - `backend/agents/analyst.py` — writes `originating_agent`, `retry_count`; uses critique on retry
 - `backend/agents/rag_agent.py` — writes `originating_agent`, `retry_count`; uses critique on retry
 - `backend/memory/agent_memory.py` — Redis-backed key-value memory; namespaced by conversation_id
-  - `remember(key, value, ttl)` — store with expiry
-  - `recall(key)` — retrieve or None
-  - `forget(key)` / `forget_all()` — delete
-- `backend/evaluation/scorer.py` — LLM-based response scorer
-  - Relevance (40%), Completeness (40%), Clarity (20%)
-  - Scores 1-5 per dimension, normalised to 0.0-1.0
-  - `passed=True` if `final_score >= 0.6`
+- `backend/evaluation/scorer.py` — LLM-based response scorer (Relevance 40%, Completeness 40%, Clarity 20%)
 - `backend/api/routes/chat.py` — passes `conversation_id` into agent graph
 - New unit tests: `test_scorer.py` (13), `test_agent_memory.py` (11), `test_graph.py` (11)
 - Total unit tests: 68 passing
 
+### Phase 7 — Interactive Dashboard ✅ COMPLETE
+- `frontend/src/api.ts` — added `doc_id`, `ingestDocument()`, updated `buildWebSocketUrl()`
+- `frontend/src/components/Sidebar.tsx` — conversation history list, new conversation button, active highlight
+- `frontend/src/components/AgentStatus.tsx` — animated ping dot showing which agent is running
+- `frontend/src/Chat.tsx` — wires sidebar + agent status + both upload types (📊 data, 📄 doc)
+- `frontend/src/App.tsx` — simplified props passed to Chat
+- `backend/api/routes/chat.py` — switched to `astream_events(version="v2")` to emit `{"type":"agent","value":"..."}` WebSocket messages per node start
+- Total unit tests: 68 passing (no new tests needed — frontend only + backend streaming change)
+
+### Phase 8 — Production Deployment ✅ COMPLETE
+- `backend/Dockerfile` — two-stage build: uv + python:3.12-slim builder, lean runtime
+- `frontend/Dockerfile` — node:20-alpine builds Vite app, nginx:alpine serves dist/
+- `infra/nginx/nginx.conf` — reverse proxy: /api/ → backend, /ws/ → WebSocket, / → frontend
+- `docker-compose.prod.yml` — full 7-container stack with healthchecks + restart policies
+- `backend/config.py` — added ALLOWED_ORIGINS + allowed_origins_list property
+- `backend/main.py` — CORS driven by config instead of hardcoded origins
+- `.dockerignore` — excludes node_modules, .venv, uploads from build context
+- `.github/workflows/ci.yml` — added docker-build job pushing to GHCR on main
+- Total unit tests: 68 passing (no new tests — infrastructure phase)
 ---
 
 ## Current Folder Structure
@@ -110,16 +120,16 @@ EADA/
 │   ├── config.py
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── state.py                ← AgentState TypedDict + retry_count, originating_agent, conversation_id
-│   │   ├── router.py               ← LLM-based router
-│   │   ├── planner.py              ← multi-step planner
-│   │   ├── analyst.py              ← data analyst + self-correction aware
-│   │   ├── rag_agent.py            ← RAG agent + self-correction aware
-│   │   ├── critic.py               ← critic + summarizer
-│   │   └── graph.py                ← LangGraph graph + route_after_critic
+│   │   ├── state.py
+│   │   ├── router.py
+│   │   ├── planner.py
+│   │   ├── analyst.py
+│   │   ├── rag_agent.py
+│   │   ├── critic.py
+│   │   └── graph.py
 │   ├── api/routes/
 │   │   ├── auth.py
-│   │   ├── chat.py                 ← agent_graph.ainvoke() + conversation_id
+│   │   ├── chat.py                 ← astream_events + agent activity WebSocket events
 │   │   ├── conversations.py
 │   │   ├── health.py
 │   │   ├── ingest.py
@@ -131,14 +141,14 @@ EADA/
 │   │   └── migrations/
 │   ├── evaluation/
 │   │   ├── __init__.py
-│   │   └── scorer.py               ← LLM-based response scorer
-│   ├── llm/gateway.py              ← complete_with_tools(), ToolCallRequest, ToolCallResponse
+│   │   └── scorer.py
+│   ├── llm/gateway.py
 │   ├── mcp/
 │   │   ├── __init__.py
 │   │   └── server.py
 │   ├── memory/
 │   │   ├── __init__.py
-│   │   └── agent_memory.py         ← Redis-backed agent memory
+│   │   └── agent_memory.py
 │   ├── observability/
 │   │   ├── logging.py
 │   │   └── tracing.py
@@ -161,6 +171,9 @@ EADA/
 │       ├── test_agent_memory.py
 │       └── test_graph.py
 ├── frontend/src/
+│   ├── components/
+│   │   ├── AgentStatus.tsx
+│   │   └── Sidebar.tsx
 │   ├── App.tsx
 │   ├── Auth.tsx
 │   ├── Chat.tsx
@@ -239,7 +252,13 @@ npm run dev
 22. **ruff unused imports**: always fix with `uv run ruff check --fix` before committing
 23. **Self-correction loop**: `retry_count` increments in analyst/rag_agent on every run — circuit breaker MAX_RETRIES=2
 24. **AgentMemory**: Redis failure is non-fatal — always returns None on error, never raises
-
+25. **astream_events version**: always pass `version="v2"` — v1 is deprecated in LangGraph 1.2+
+26. **Agent node names in events**: LangGraph fires `on_chain_start` with `name` = node function name — must match exactly: `router`, `planner`, `analyst`, `rag_agent`, `critic`, `summarizer`
+27. **uv.lock pins Python version**: changing `requires-python` in pyproject.toml also requires `uv lock` to regenerate lockfile
+28. **PowerShell Set-Content -Encoding UTF8 writes BOM**: Nginx and pytest reject BOM; always use `[System.IO.File]::WriteAllText` with `UTF8Encoding($false)` for config files
+29. **qdrant/qdrant image has no curl or wget**: use TCP check: `timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/6333'`
+30. **python:3.12-slim has no curl**: use Python one-liner for healthcheck: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"`
+31. **prod .env needs extra vars**: POSTGRES_USER, POSTGRES_PASSWORD, LANGFUSE_SALT required by docker-compose.prod.yml — dev compose didn't need them
 ---
 
 ## Roadmap reminder (9 phases, 26 weeks total)
@@ -251,10 +270,10 @@ Phase 3 — RAG Pipeline                  ✅ DONE
 Phase 4 — Tool Calling & MCP            ✅ DONE
 Phase 5 — Full Agent Architecture       ✅ DONE
 Phase 6 — Multi-Agent Collaboration     ✅ DONE
-Phase 7 — Interactive Dashboard
-Phase 8 — Production Deployment
+Phase 7 — Interactive Dashboard         ✅ DONE
+Phase 8 — Production Deployment         ✅ DONE
 Phase 9 — Capstone Polish
 
 ---
 
-*Last updated: Phase 6 complete — self-correction loop, Redis agent memory, evaluation scorer. 68 unit tests passing. Next: Phase 7 Interactive Dashboard.*
+*Last updated: Phase 8 complete — full production Docker stack, Nginx reverse proxy, GHCR CI. 68 unit tests passing. Next: Phase 9 Capstone Polish.*
