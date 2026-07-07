@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     primary_model: str = "gemini/gemini-2.5-flash"
-    fallback_model: str = "groq/llama-3.1-70b-versatile"
+    fallback_model: str = "groq/llama-3.3-70b-versatile"
     max_tokens: int = 8192
     temperature: float = 0.1
 

@@ -1,6 +1,6 @@
 ﻿import axios from "axios";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = window.location.origin + "/api";
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -123,7 +123,7 @@ export function buildWebSocketUrl(
   fileId?: string,
   docId?: string
 ): string {
-  let url = `ws://localhost:8000/chat/ws?token=${token}`;
+  let url = `ws://${window.location.host}/ws/chat/ws?token=${token}`;
   if (conversationId) url += `&conversation_id=${conversationId}`;
   if (fileId) url += `&file_id=${fileId}`;
   if (docId) url += `&doc_id=${docId}`;

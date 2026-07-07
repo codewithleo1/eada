@@ -1,6 +1,6 @@
-﻿services:
+services:
 
-  # ── Infrastructure ──────────────────────────────────────────────────────
+  # Infrastructure
 
   postgres:
     image: postgres:16-alpine
@@ -52,7 +52,7 @@
       postgres:
         condition: service_healthy
 
-  # ── Application ─────────────────────────────────────────────────────────
+  # Application
 
   backend:
     build:
@@ -80,24 +80,15 @@
       context: .
       dockerfile: frontend/Dockerfile
     restart: unless-stopped
+    ports:
+      - "80:80"
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
-
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - frontend
-      - backend
 
 volumes:
   postgres_data:
