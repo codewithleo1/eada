@@ -21,6 +21,10 @@ export default function Sidebar({
 
   useEffect(() => {
     loadConversations();
+  }, []);
+
+  useEffect(() => {
+    if (activeConversationId) loadConversations();
   }, [activeConversationId]);
 
   async function loadConversations() {

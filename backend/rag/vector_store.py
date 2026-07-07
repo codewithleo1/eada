@@ -1,11 +1,12 @@
 """
-vector_store.py — stores and searches document chunks in Qdrant.
+vector_store.py Ã¢â‚¬â€ stores and searches document chunks in Qdrant.
 
 Each document chunk is stored as a vector + payload.
 Search returns the top K most similar chunks to a query vector.
 """
 
 from qdrant_client import QdrantClient
+from backend.config import settings
 from qdrant_client.models import (
     Distance,
     VectorParams,
@@ -19,8 +20,7 @@ from backend.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-# Qdrant connection — matches docker-compose.yml
-QDRANT_URL = "http://localhost:6333"
+# Qdrant connection Ã¢â‚¬â€ matches docker-compose.yml
 
 # Collection name for RAG documents
 COLLECTION_NAME = "eada_documents"
@@ -36,7 +36,7 @@ class VectorStoreError(Exception):
 
 def get_client() -> QdrantClient:
     """Return a Qdrant client connected to our Docker instance."""
-    return QdrantClient(url=QDRANT_URL)
+    return QdrantClient(url=settings.qdrant_url)
 
 
 def ensure_collection(embedding_dim: int = 768) -> None:

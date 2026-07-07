@@ -1,4 +1,4 @@
-﻿from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -28,9 +28,12 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = Field(
-        default="postgresql+asyncpg://eada:eada@localhost:5432/eada",
+        default="postgresql+asyncpg://eada:eada@localhost:5432/eada_app",
         alias="DATABASE_URL"
     )
+
+    # Qdrant
+    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
 
     # Redis
     redis_url: str = Field(default="redis://localhost:6379", alias="REDIS_URL")
