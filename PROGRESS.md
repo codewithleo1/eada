@@ -282,6 +282,8 @@ npm run dev
 38. **Qdrant URL hardcoded**: vector_store.py had localhost:6333 hardcoded — always use settings.qdrant_url so prod uses container name
 39. **Nginx default upload limit is 1MB**: add `client_max_body_size 50m` for file upload endpoints
 40. **Sidebar useEffect**: must have two hooks — one with [] for initial load, one with [activeConversationId] for refresh
+41. **NaN/inf in Excel files**: pandas reads empty cells as NaN which Python's JSON encoder rejects — always check `math.isnan(val)` before `json.dumps()` in file_tool.py
+42. **Gemini free tier = 20 requests/day**: when quota is hit, Groq fallback handles general chat but not file analysis (no tool calling) — use a paid key for heavy testing
 
 ---
 
@@ -300,4 +302,4 @@ Phase 9 — Capstone Polish               ✅ DONE
 
 ---
 
-*Last updated: Phase 9 complete — modern Claude-style UI, full production stack, all features working. 68 unit tests passing. Project complete!*
+*Last updated: Phase 9 complete — modern Claude-style UI, all bugs fixed, full production stack working. 68 unit tests passing. Project complete!*
