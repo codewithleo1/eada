@@ -16,7 +16,7 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 
 ---
 
-## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ Phase 7 ✅ Phase 8 ✅ — Phase 9 Capstone Polish NEXT
+## Status: Phase 0 ✅ Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 ✅ Phase 6 ✅ Phase 7 ✅ Phase 8 ✅ Phase 9 ✅ — ALL PHASES COMPLETE 🎉
 
 ---
 
@@ -109,6 +109,20 @@ Enterprise Autonomous Data Analyst (EADA) — multi-agent AI platform, built on 
 - `.dockerignore` — excludes node_modules, .venv, uploads from build context
 - `.github/workflows/ci.yml` — added docker-build job pushing to GHCR on main
 - Total unit tests: 68 passing (no new tests — infrastructure phase)
+
+### Phase 9 — Capstone Polish ✅ COMPLETE
+- `README.md` — full project documentation with architecture, stack, quick start
+- `frontend/src/Auth.tsx` — modern gradient login page (Claude/ChatGPT style)
+- `frontend/src/Chat.tsx` — full redesign: welcome screen, suggestion chips, message avatars, thinking dots, auto-resize textarea, Shift+Enter support
+- `frontend/src/components/Sidebar.tsx` — grouped by Today/Yesterday, Sign Out at bottom, loads on mount
+- `frontend/src/components/AgentStatus.tsx` — colored pills per agent type
+- `backend/config.py` — added `qdrant_url` setting
+- `backend/rag/vector_store.py` — uses `settings.qdrant_url` instead of hardcoded localhost
+- `infra/nginx/nginx.conf` — added `client_max_body_size 50m` for large file uploads
+- `test_data/` — sample products.csv, sales.csv, company_report.txt for demos
+- `.github/workflows/ci.yml` — updated to Python 3.12 to match Docker
+- Total unit tests: 68 passing
+
 ---
 
 ## Current Folder Structure
@@ -265,6 +279,10 @@ npm run dev
 35. **Groq llama-3.1-70b-versatile decommissioned** — use `llama-3.3-70b-versatile` instead
 36. **docker compose restart does not reload .env** — use `docker compose up -d <service>` to recreate the container with new env vars
 37. **Gemini free tier limit is 20 requests/day** — get a paid key or use Groq as primary for heavy testing
+38. **Qdrant URL hardcoded**: vector_store.py had localhost:6333 hardcoded — always use settings.qdrant_url so prod uses container name
+39. **Nginx default upload limit is 1MB**: add `client_max_body_size 50m` for file upload endpoints
+40. **Sidebar useEffect**: must have two hooks — one with [] for initial load, one with [activeConversationId] for refresh
+
 ---
 
 ## Roadmap reminder (9 phases, 26 weeks total)
@@ -278,8 +296,8 @@ Phase 5 — Full Agent Architecture       ✅ DONE
 Phase 6 — Multi-Agent Collaboration     ✅ DONE
 Phase 7 — Interactive Dashboard         ✅ DONE
 Phase 8 — Production Deployment         ✅ DONE
-Phase 9 — Capstone Polish
+Phase 9 — Capstone Polish               ✅ DONE
 
 ---
 
-*Last updated: Phase 8 complete — full production Docker stack, Nginx reverse proxy, GHCR CI. 68 unit tests passing. Next: Phase 9 Capstone Polish.*
+*Last updated: Phase 9 complete — modern Claude-style UI, full production stack, all features working. 68 unit tests passing. Project complete!*
