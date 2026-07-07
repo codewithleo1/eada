@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Auth from "./Auth";
 import Chat from "./Chat";
 import "./App.css";
@@ -27,10 +27,5 @@ export default function App() {
     return <Auth onAuthenticated={handleAuthenticated} />;
   }
 
-  return (
-    <Chat
-      token={token}
-      onLogout={handleLogout}
-    />
-  );
+  return <Chat token={token} onLogout={handleLogout} />;
 }
