@@ -1,11 +1,12 @@
 """
-file_tool.py — reads uploaded data files and extracts schema + sample rows.
+file_tool.py - reads uploaded data files and extracts schema + sample rows.
 
 Supports: CSV, Excel (.xlsx/.xls), JSON, Parquet
 Returns structured metadata the LLM uses to write accurate SQL queries.
 """
 
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -109,15 +110,23 @@ def _read_file(path: Path, ext: str) -> pd.DataFrame:
 def _safe_sample(df: pd.DataFrame, n: int = 5) -> list[dict]:
     """
     Return first n rows as a list of dicts.
-    Converts non-JSON-serialisable types (numpy int64, NaT, etc.) to strings.
+    Converts NaN, inf, and other non-JSON-serialisable types to safe values.
     """
     sample_df = df.head(n)
     rows = []
     for _, row in sample_df.iterrows():
         clean_row = {}
         for col, val in row.items():
+            # Replace NaN and inf with None
             try:
-                json.dumps(val)  # test serialisability
+                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                    clean_row[col] = None
+                    continue
+            except (TypeError, ValueError):
+                pass
+            # Convert anything else that is not JSON-serialisable to string
+            try:
+                json.dumps(val)
                 clean_row[col] = val
             except (TypeError, ValueError):
                 clean_row[col] = str(val)
@@ -128,20 +137,12 @@ def _safe_sample(df: pd.DataFrame, n: int = 5) -> list[dict]:
 def _build_sql_ref(path: Path, ext: str) -> str:
     """
     Return the DuckDB SQL snippet to reference this file in a FROM clause.
-
-    Examples:
-        CSV:     read_csv('uploads/abc123.csv', auto_detect=True)
-        Excel:   read_xlsx('uploads/abc123.xlsx')   -- via spatial ext
-        Parquet: read_parquet('uploads/abc123.parquet')
-        JSON:    read_json('uploads/abc123.json')
     """
-    # Use forward slashes — DuckDB handles them cross-platform
     p = path.as_posix()
 
     if ext == ".csv":
         return f"read_csv('{p}', auto_detect=True)"
     elif ext in (".xlsx", ".xls"):
-        # DuckDB reads Excel via pandas bridge — we'll use a view approach
         return f"excel:'{p}'"
     elif ext == ".parquet":
         return f"read_parquet('{p}')"
