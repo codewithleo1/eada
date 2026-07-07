@@ -259,6 +259,12 @@ npm run dev
 29. **qdrant/qdrant image has no curl or wget**: use TCP check: `timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/6333'`
 30. **python:3.12-slim has no curl**: use Python one-liner for healthcheck: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"`
 31. **prod .env needs extra vars**: POSTGRES_USER, POSTGRES_PASSWORD, LANGFUSE_SALT required by docker-compose.prod.yml — dev compose didn't need them
+32. **Frontend API_BASE must be relative in production** — use `window.location.origin + "/api"` not hardcoded `http://localhost:8000`
+33. **WebSocket URL must go through Nginx** — use `ws://${window.location.host}/ws/chat/ws` not `ws://localhost:8000/chat/ws`
+34. **Nginx proxy_pass path doubling** — `location /ws/chat/ws { proxy_pass http://backend:8000/chat/ws; }` is the correct pattern; avoid trailing slashes that cause path concatenation
+35. **Groq llama-3.1-70b-versatile decommissioned** — use `llama-3.3-70b-versatile` instead
+36. **docker compose restart does not reload .env** — use `docker compose up -d <service>` to recreate the container with new env vars
+37. **Gemini free tier limit is 20 requests/day** — get a paid key or use Groq as primary for heavy testing
 ---
 
 ## Roadmap reminder (9 phases, 26 weeks total)
