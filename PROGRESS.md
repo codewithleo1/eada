@@ -284,6 +284,8 @@ npm run dev
 40. **Sidebar useEffect**: must have two hooks — one with [] for initial load, one with [activeConversationId] for refresh
 41. **NaN/inf in Excel files**: pandas reads empty cells as NaN which Python's JSON encoder rejects — always check `math.isnan(val)` before `json.dumps()` in file_tool.py
 42. **Gemini free tier = 20 requests/day**: when quota is hit, Groq fallback handles general chat but not file analysis (no tool calling) — use a paid key for heavy testing
+43. **docker compose restart breaks networking on Windows** — always use `down` then `up -d` to recreate the network properly
+44. **frontend 502 on startup** — fixed by adding `condition: service_healthy` to frontend's depends_on for backend
 
 ---
 

@@ -33,3 +33,6 @@ uploads/*
 *.docx
 ~$*.docx
 ~$*.xlsx
+# Node / Frontend build
+node_modules/
+frontend/dist/
